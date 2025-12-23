@@ -105,6 +105,12 @@ unset($_SESSION['success'], $_SESSION['error']);
     </div>
 
     <script>
+        function confirmNewEvent() {
+            if (confirm("Creating a New Event will make the current event inactive. Continue?")) {
+               document.getElementById('newModal').style.display = 'flex';
+            }    
+        }
+
         function confirmOpenEvent(eventId) {
          if (confirm("Are you sure you want to switch to this event?")) {
            // Redirect to settings.php with open_id, then immediately go to dashboard after PHP updates
