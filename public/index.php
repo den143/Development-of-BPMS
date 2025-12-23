@@ -1,7 +1,7 @@
 <?php
 session_start();
 
-// Redirect logged-in users
+// Redirect logged-in users based on their role
 if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
     switch ($_SESSION['role']) {
         case 'Event Manager':
@@ -39,7 +39,7 @@ $error = $_GET['error'] ?? null;
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; height: 100vh; display: flex; overflow: hidden; }
 
-        /* --- LEFT SIDE: BRANDING (DESKTOP DEFAULT) --- */
+        /* --- LEFT SIDE: BRANDING --- */
         .brand-section {
             width: 50%;
             background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
@@ -54,7 +54,6 @@ $error = $_GET['error'] ?? null;
             z-index: 10;
         }
 
-        /* Grouping for Flexbox control */
         .brand-header-group { display: flex; flex-direction: column; align-items: center; }
         .brand-text-group { margin-top: 20px; }
 
@@ -64,7 +63,6 @@ $error = $_GET['error'] ?? null;
         
         .brand-tagline { font-size: 18px; color: #e5e7eb; font-style: italic; font-weight: 300; margin-bottom: 10px; }
         .brand-desc { font-size: 14px; color: #9ca3af; max-width: 400px; line-height: 1.5; margin: 0 auto; }
-        
         .brand-footer { position: absolute; bottom: 20px; font-size: 12px; color: #6b7280; }
 
         /* --- RIGHT SIDE: LOGIN FORM --- */
@@ -101,77 +99,47 @@ $error = $_GET['error'] ?? null;
         .utility-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; font-size: 13px; }
         .remember-box { display: flex; align-items: center; gap: 8px; color: #4b5563; }
         .forgot-link { color: #F59E0B; text-decoration: none; font-weight: 600; }
+        
         .btn-login { width: 100%; padding: 14px; background-color: #F59E0B; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 700; cursor: pointer; transition: background 0.2s; display: flex; justify-content: center; align-items: center; gap: 10px; }
         .btn-login:hover { background-color: #d97706; }
         
-        .help-link { text-align: center; margin-top: 15px; font-size: 13px; color: #6b7280; }
-        .help-link a { color: #1f2937; font-weight: 600; text-decoration: none; }
+        /* Links at bottom */
+        .register-link { text-align: center; margin-top: 20px; font-size: 14px; color: #6b7280; padding-bottom: 15px; border-bottom: 1px solid #f3f4f6; }
+        .register-link a { color: #1f2937; font-weight: 700; text-decoration: none; margin-left: 5px; }
+        .register-link a:hover { color: #F59E0B; text-decoration: underline; }
+
+        .help-link { text-align: center; margin-top: 15px; font-size: 13px; color: #9ca3af; }
+        .help-link a { color: #6b7280; font-weight: 600; text-decoration: none; }
+        
         .login-footer { margin-top: 25px; text-align: center; font-size: 12px; color: #9ca3af; }
         .alert-error { background-color: #fee2e2; color: #dc2626; padding: 12px; border-radius: 8px; font-size: 14px; margin-bottom: 20px; text-align: center; border: 1px solid #fecaca; display: flex; align-items: center; justify-content: center; gap: 8px; }
         .toggle-password { position: absolute; right: 15px; top: 50%; transform: translateY(-50%); cursor: pointer; color: #9ca3af; }
 
-        /* --- MOBILE / TABLET RESPONSIVE --- */
+        /* --- MOBILE RESPONSIVE --- */
         @media (max-width: 900px) {
             body { flex-direction: column; overflow-y: auto; }
-            
-            /* COMPACT HEADER MODE */
-            .brand-section { 
-                width: 100%; 
-                min-height: auto; 
-                padding: 15px 20px; 
-                flex-direction: row; /* Horizontal Layout */
-                justify-content: space-between;
-                align-items: center;
-                text-align: left;
-                background: #111827; /* Solid dark color */
-                flex-shrink: 0;
-            }
-
-            /* Left Side: Logo + Titles */
-            .brand-header-group { 
-                flex-direction: row; 
-                align-items: center; 
-                gap: 15px; 
-            }
-
-            .brand-logo { 
-                width: 45px; /* Small Logo */
-                margin-bottom: 0; 
-            }
-            
-            .brand-title-wrapper {
-                display: flex;
-                flex-direction: column;
-            }
-
-            .brand-title { font-size: 22px; } /* Smaller Title */
+            .brand-section { width: 100%; min-height: auto; padding: 15px 20px; flex-direction: row; justify-content: space-between; align-items: center; text-align: left; background: #111827; flex-shrink: 0; }
+            .brand-header-group { flex-direction: row; align-items: center; gap: 15px; }
+            .brand-logo { width: 45px; margin-bottom: 0; }
+            .brand-title-wrapper { display: flex; flex-direction: column; }
+            .brand-title { font-size: 22px; }
             .brand-subtitle { font-size: 10px; color: #d1d5db; letter-spacing: 1px; }
-
-            /* Right Side: Text (Hidden on very small screens, visible on tablets) */
-            .brand-text-group { 
-                margin-top: 0; 
-                text-align: right;
-                display: none; /* Hide by default on tiny screens to save space */
-            }
-
-            /* Show tagline only on Tablet-sized screens (e.g. iPad Mini) */
+            .brand-text-group { display: none; margin-top: 0; text-align: right; }
+            
             @media (min-width: 600px) {
                 .brand-text-group { display: block; }
                 .brand-tagline { font-size: 12px; margin-bottom: 0; }
-                .brand-desc { display: none; } /* Still hide long desc */
+                .brand-desc { display: none; }
             }
-
-            .brand-footer { display: none; } /* Hide footer link on mobile */
-
+            .brand-footer { display: none; }
             .login-section { width: 100%; padding: 20px; flex-grow: 1; align-items: flex-start; }
-            .login-card { margin-top: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+            .login-card { margin-top: 10px; }
         }
     </style>
 </head>
 <body>
 
     <div class="brand-section">
-        
         <div class="brand-header-group">
             <img src="./assets/images/BPMS_logo.png" alt="BPMS Logo" class="brand-logo">
             <div class="brand-title-wrapper">
@@ -179,18 +147,11 @@ $error = $_GET['error'] ?? null;
                 <div class="brand-subtitle">Beauty Pageant Management System</div>
             </div>
         </div>
-
         <div class="brand-text-group">
             <div class="brand-tagline">"Celebrating Beauty, Intelligence, and Grace"</div>
-            <p class="brand-desc">
-                The official management portal for the University Beauty Pageant. 
-                Securely manage contestants in real-time.
-            </p>
+            <p class="brand-desc">The official management portal for the University Beauty Pageant. Securely manage contestants in real-time.</p>
         </div>
-
-        <div class="brand-footer">
-            &copy; <?= date("Y") ?> UEP Beauty Pageant Management System.
-        </div>
+        <div class="brand-footer">&copy; <?= date("Y") ?> UEP Beauty Pageant Management System.</div>
     </div>
 
     <div class="login-section">
@@ -249,6 +210,10 @@ $error = $_GET['error'] ?? null;
                 <button type="submit" class="btn-login">
                     Sign In <i class="fas fa-arrow-right"></i>
                 </button>
+
+                <div class="register-link">
+                    Want to join the pageant? <a href="register.php">Register as Contestant</a>
+                </div>
 
                 <div class="help-link">
                     Need Help? <a href="#" onclick="alert('Please contact the Event Manager for access.'); return false;">Contact Admin</a>
