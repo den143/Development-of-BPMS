@@ -3,6 +3,7 @@ require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
 requireRole(['Event Manager', 'Contestant Manager']);
 require_once __DIR__ . '/../app/config/database.php';
+require_once __DIR__ . '/../app/models/Contestant.php'; // <--- 1. Import the Model
 
 // --- VIEW LOGIC ---
 $view = $_GET['view'] ?? 'active';
@@ -21,37 +22,13 @@ if ($view === 'pending') {
     $page_title = "Official Candidates";
 }
 
-// --- BUILD QUERY ---
-// Base Query
-$sql = "SELECT u.id, u.name, u.email, u.status, 
-               cd.age, cd.height, cd.vital_stats, cd.hometown, cd.motto, cd.photo, cd.event_id,
-               e.name as event_name 
-        FROM users u 
-        JOIN contestant_details cd ON u.id = cd.user_id 
-        JOIN events e ON cd.event_id = e.id 
-        WHERE e.user_id = ? AND u.role = 'Contestant' AND u.status = ?";
-
-$types = "is";
-$params = [$my_id, $status_filter];
-
-// Add Search Condition (Name or Hometown)
-if (!empty($search)) {
-    $sql .= " AND (u.name LIKE ? OR cd.hometown LIKE ?)";
-    $types .= "ss";
-    $searchTerm = "%$search%";
-    $params[] = $searchTerm;
-    $params[] = $searchTerm;
-}
-
-$sql .= " ORDER BY u.created_at DESC";
-
-// Execute Query
-$stmt = $conn->prepare($sql);
-$stmt->bind_param($types, ...$params);
-$stmt->execute();
-$contestants = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+// --- FETCH DATA USING MODEL (Refactored) ---
+// 2. We removed the raw SQL block here.
+// 3. We now fetch data simply by asking the Model:
+$contestants = Contestant::getAllByManager($my_id, $status_filter, $search);
 
 // Fetch Events (for Modal)
+// (You could also move this to an Event model method later, e.g., Event::getActive($my_id))
 $evt_stmt = $conn->prepare("SELECT id, name FROM events WHERE user_id = ? AND status = 'Active'");
 $evt_stmt->bind_param("i", $my_id);
 $evt_stmt->execute();
@@ -304,7 +281,7 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                 <div class="form-row">
                     <div class="form-group"><label>Email</label><input type="email" name="email" class="form-control" placeholder="contestant@email.com" required></div>
                     <div class="form-group"><label>Password</label>
-                        <input type="password" name="password" id="addPass" class="form-control" placeholder="Enter password" value="123456" required>
+                        <input type="password" name="password" id="addPass" class="form-control" placeholder="Enter password" required>
                         <i class="fas fa-eye toggle-password" onclick="togglePassword('addPass', this)"></i>
                     </div>
                 </div>
@@ -344,8 +321,8 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label>Email</label><input type="email" name="email" id="edit_email" class="form-control" placeholder="name@example.com" required></div>
-                    <div class="form-group"><label>Change Password (Optional)</label>
-                        <input type="password" name="password" id="editPass" class="form-control" placeholder="Leave empty to keep">
+                    <div class="form-group"><label>Change Password</label>
+                        <input type="password" name="password" id="editPass" class="form-control" placeholder="Enter strong password">
                         <i class="fas fa-eye toggle-password" onclick="togglePassword('editPass', this)"></i>
                     </div>
                 </div>

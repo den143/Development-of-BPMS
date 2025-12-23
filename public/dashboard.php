@@ -35,7 +35,6 @@ $count_rounds = 0;
 
 if ($event_id) {
     // A. Count Active Contestants
-    // We join 'users' and 'contestant_details' to ensure we only count those linked to THIS event
     $c_stmt = $conn->prepare("
         SELECT COUNT(*) as total 
         FROM users u 
@@ -46,12 +45,18 @@ if ($event_id) {
     $c_stmt->execute();
     $count_contestants = $c_stmt->get_result()->fetch_assoc()['total'];
 
-    // B. Count Judges (Placeholder for next module)
-    // For now, we return 0 until we build the Judge table/module.
-    // If you want to count 'Judge Coordinators' from Organizers list:
-    // $j_stmt = $conn->prepare("SELECT COUNT(*) FROM users WHERE created_by = ? AND role = 'Judge Coordinator' AND status = 'Active'"); ...
+    // B. Count Active Judges (UPDATED)
+    // We count links in 'event_judges' that are marked 'Active'
+    $j_stmt = $conn->prepare("
+        SELECT COUNT(*) as total 
+        FROM event_judges 
+        WHERE event_id = ? AND status = 'Active'
+    ");
+    $j_stmt->bind_param("i", $event_id);
+    $j_stmt->execute();
+    $count_judges = $j_stmt->get_result()->fetch_assoc()['total'];
     
-    // C. Count Rounds (Placeholder)
+    // C. Count Rounds (Placeholder for Criteria Module)
     // $r_stmt = ...
 }
 
@@ -198,7 +203,7 @@ unset($_SESSION['success'], $_SESSION['error'], $_SESSION['show_modal']);
                                 </div>
                                 <div class="task-content">
                                     <strong>Register Judges</strong>
-                                    <span><?= $count_judges > 0 ? 'Judges ready.' : 'Recruit judges for scoring.' ?></span>
+                                    <span><?= $count_judges > 0 ? $count_judges . ' Judges ready.' : 'Recruit judges for scoring.' ?></span>
                                 </div>
                                 <a href="judges.php" class="btn-action">Manage</a>
                             </li>
