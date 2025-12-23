@@ -1,7 +1,7 @@
 <?php
 session_start();
 
-// Redirect logged-in users based on their role
+// Redirect logged-in users
 if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
     switch ($_SESSION['role']) {
         case 'Event Manager':
@@ -11,10 +11,13 @@ if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
             header("Location: ./judge_coordinator.php");
             break;
         case 'Contestant Manager':
-            header("Location: ./contestant_manager.php");
+            header("Location: ./contestant_manager.php"); // Future
             break;
         case 'Tabulator':
-            header("Location: ./tabulator.php");
+            header("Location: ./tabulator.php"); // Future
+            break;
+        case 'Contestant':
+            header("Location: ./contestant_dashboard.php"); // NEW
             break;
         default:
             header("Location: ./logout.php");
@@ -35,11 +38,11 @@ $error = $_GET['error'] ?? null;
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <style>
-        /* --- CORE RESET --- */
+        /* CORE RESET */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; height: 100vh; display: flex; overflow: hidden; }
 
-        /* --- LEFT SIDE: BRANDING --- */
+        /* LEFT SIDE: BRANDING */
         .brand-section {
             width: 50%;
             background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
@@ -56,16 +59,14 @@ $error = $_GET['error'] ?? null;
 
         .brand-header-group { display: flex; flex-direction: column; align-items: center; }
         .brand-text-group { margin-top: 20px; }
-
-        .brand-logo { width: 140px; margin-bottom: 15px; }
+        .brand-logo { width: 140px; margin-bottom: 15px; drop-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         .brand-title { font-size: 36px; font-weight: 800; color: #F59E0B; letter-spacing: 1px; line-height: 1; }
         .brand-subtitle { font-size: 14px; color: #9ca3af; text-transform: uppercase; letter-spacing: 2px; margin-top: 5px; }
-        
         .brand-tagline { font-size: 18px; color: #e5e7eb; font-style: italic; font-weight: 300; margin-bottom: 10px; }
         .brand-desc { font-size: 14px; color: #9ca3af; max-width: 400px; line-height: 1.5; margin: 0 auto; }
         .brand-footer { position: absolute; bottom: 20px; font-size: 12px; color: #6b7280; }
 
-        /* --- RIGHT SIDE: LOGIN FORM --- */
+        /* RIGHT SIDE: LOGIN FORM */
         .login-section {
             width: 50%;
             background-color: #f9fafb;
@@ -88,7 +89,7 @@ $error = $_GET['error'] ?? null;
         .login-header h2 { font-size: 26px; color: #1f2937; margin-bottom: 5px; font-weight: 700; }
         .login-header p { color: #6b7280; font-size: 14px; margin-bottom: 30px; }
 
-        /* Form Styling */
+        /* INPUT GROUPS */
         .input-group { margin-bottom: 20px; }
         .input-group label { display: block; margin-bottom: 8px; color: #374151; font-size: 14px; font-weight: 600; }
         .input-wrapper { position: relative; }
@@ -103,19 +104,16 @@ $error = $_GET['error'] ?? null;
         .btn-login { width: 100%; padding: 14px; background-color: #F59E0B; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 700; cursor: pointer; transition: background 0.2s; display: flex; justify-content: center; align-items: center; gap: 10px; }
         .btn-login:hover { background-color: #d97706; }
         
-        /* Links at bottom */
         .register-link { text-align: center; margin-top: 20px; font-size: 14px; color: #6b7280; padding-bottom: 15px; border-bottom: 1px solid #f3f4f6; }
         .register-link a { color: #1f2937; font-weight: 700; text-decoration: none; margin-left: 5px; }
         .register-link a:hover { color: #F59E0B; text-decoration: underline; }
 
         .help-link { text-align: center; margin-top: 15px; font-size: 13px; color: #9ca3af; }
         .help-link a { color: #6b7280; font-weight: 600; text-decoration: none; }
-        
         .login-footer { margin-top: 25px; text-align: center; font-size: 12px; color: #9ca3af; }
         .alert-error { background-color: #fee2e2; color: #dc2626; padding: 12px; border-radius: 8px; font-size: 14px; margin-bottom: 20px; text-align: center; border: 1px solid #fecaca; display: flex; align-items: center; justify-content: center; gap: 8px; }
         .toggle-password { position: absolute; right: 15px; top: 50%; transform: translateY(-50%); cursor: pointer; color: #9ca3af; }
 
-        /* --- MOBILE RESPONSIVE --- */
         @media (max-width: 900px) {
             body { flex-direction: column; overflow-y: auto; }
             .brand-section { width: 100%; min-height: auto; padding: 15px 20px; flex-direction: row; justify-content: space-between; align-items: center; text-align: left; background: #111827; flex-shrink: 0; }
@@ -125,12 +123,7 @@ $error = $_GET['error'] ?? null;
             .brand-title { font-size: 22px; }
             .brand-subtitle { font-size: 10px; color: #d1d5db; letter-spacing: 1px; }
             .brand-text-group { display: none; margin-top: 0; text-align: right; }
-            
-            @media (min-width: 600px) {
-                .brand-text-group { display: block; }
-                .brand-tagline { font-size: 12px; margin-bottom: 0; }
-                .brand-desc { display: none; }
-            }
+            @media (min-width: 600px) { .brand-text-group { display: block; } .brand-tagline { font-size: 12px; margin-bottom: 0; } .brand-desc { display: none; } }
             .brand-footer { display: none; }
             .login-section { width: 100%; padding: 20px; flex-grow: 1; align-items: flex-start; }
             .login-card { margin-top: 10px; }
@@ -175,11 +168,17 @@ $error = $_GET['error'] ?? null;
                         <i class="fas fa-user-tag icon"></i>
                         <select name="role" class="form-control" required>
                             <option value="" disabled selected>Select your role...</option>
-                            <option value="Event Manager">Event Manager</option>
-                            <option value="Judge Coordinator">Judge Coordinator</option>
-                            <option value="Contestant Manager">Contestant Manager</option>
-                            <option value="Tabulator">Tabulator</option>
-                        </select>
+                            
+                            <option value="Event Manager" style="font-weight:bold; color:#111827;">Event Manager</option>
+                            <option value="Judge Coordinator">&nbsp;&nbsp;&nbsp;Judge Coordinator</option>
+                            <option value="Contestant Manager">&nbsp;&nbsp;&nbsp;Contestant Manager</option>
+                            <option value="Tabulator">&nbsp;&nbsp;&nbsp;Tabulator</option>
+                            
+                            <option disabled>────────────────</option>
+                            
+                            <option value="Contestant">Contestant</option>
+                            <option value="Judge">Judge</option>
+                            </select>
                     </div>
                 </div>
 
@@ -200,13 +199,6 @@ $error = $_GET['error'] ?? null;
                     </div>
                 </div>
 
-                <div class="utility-row">
-                    <label class="remember-box">
-                        <input type="checkbox" name="remember"> Remember me
-                    </label>
-                    <a href="#" class="forgot-link" onclick="alert('Please contact the IT department to reset your password.'); return false;">Forgot Password?</a>
-                </div>
-
                 <button type="submit" class="btn-login">
                     Sign In <i class="fas fa-arrow-right"></i>
                 </button>
@@ -220,9 +212,7 @@ $error = $_GET['error'] ?? null;
                 </div>
             </form>
 
-            <div class="login-footer">
-                Protected by <strong>BPMS Security</strong>
-            </div>
+            <div class="login-footer">Protected by <strong>BPMS Security</strong></div>
         </div>
     </div>
 
