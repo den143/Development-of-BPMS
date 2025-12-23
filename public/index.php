@@ -57,7 +57,7 @@ $error = $_GET['error'] ?? null;
         .brand-header-group { display: flex; flex-direction: column; align-items: center; }
         .brand-text-group { margin-top: 20px; }
 
-        .brand-logo { width: 140px; margin-bottom: 15px; drop-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .brand-logo { width: 140px; margin-bottom: 15px; }
         .brand-title { font-size: 36px; font-weight: 800; color: #F59E0B; letter-spacing: 1px; line-height: 1; }
         .brand-subtitle { font-size: 14px; color: #9ca3af; text-transform: uppercase; letter-spacing: 2px; margin-top: 5px; }
         

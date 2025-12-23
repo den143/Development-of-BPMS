@@ -1,17 +1,16 @@
 <?php
 require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
-requireRole(['Event Manager', 'Contestant Manager']); // Allow both to manage
+requireRole(['Event Manager', 'Contestant Manager']);
 require_once __DIR__ . '/../app/config/database.php';
 
-// --- HANDLE POST REQUESTS (Manual Add) ---
+// --- HANDLE POST REQUESTS (Create OR Update) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
-    // 1. Capture Inputs
+    $action = $_POST['action'] ?? 'create';
     $event_id = (int)$_POST['event_id'];
     $name     = trim($_POST['name']);
     $email    = trim($_POST['email']);
-    $pass     = trim($_POST['password']); // Can be empty if we generate a default one? Let's require it.
     
     // Details
     $age         = (int)$_POST['age'];
@@ -20,69 +19,112 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $hometown    = trim($_POST['hometown']);
     $motto       = trim($_POST['motto']);
 
-    if (empty($name) || empty($email) || empty($pass) || empty($event_id)) {
-        header("Location: ../public/contestants.php?error=All fields are required");
-        exit();
-    }
-
-    // 2. Check Email
-    $check = $conn->prepare("SELECT id FROM users WHERE email = ?");
-    $check->bind_param("s", $email);
-    $check->execute();
-    if ($check->get_result()->num_rows > 0) {
-        header("Location: ../public/contestants.php?error=Email already exists");
-        exit();
-    }
-
-    // 3. Handle Photo (Same logic as register, but simpler error handling for admin)
-    $photo_name = "default_contestant.png";
-    if (isset($_FILES['photo']) && $_FILES['photo']['error'] === 0) {
-        $ext = strtolower(pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION));
-        $allowed = ['jpg', 'jpeg', 'png'];
-        if (in_array($ext, $allowed)) {
-            $new_name = "contestant_" . time() . "." . $ext;
-            $target = __DIR__ . '/../public/assets/uploads/contestants/' . $new_name;
-            if (move_uploaded_file($_FILES['photo']['tmp_name'], $target)) {
-                $photo_name = $new_name;
-            }
-        }
-    }
-
-    // 4. Insert Transaction
-    $conn->begin_transaction();
-    try {
-        $hashed_pass = password_hash($pass, PASSWORD_DEFAULT);
+    // --- CREATE NEW ---
+    if ($action === 'create') {
+        $pass = trim($_POST['password']);
         
-        // Manual Add = ACTIVE immediately
-        $stmt1 = $conn->prepare("INSERT INTO users (name, email, password, role, status) VALUES (?, ?, ?, 'Contestant', 'Active')");
-        $stmt1->bind_param("sss", $name, $email, $hashed_pass);
-        $stmt1->execute();
-        $user_id = $conn->insert_id;
+        // Photo is required for Create
+        if (!isset($_FILES['photo']) || $_FILES['photo']['error'] !== 0) {
+            header("Location: ../public/contestants.php?error=Photo is required");
+            exit();
+        }
 
-        $stmt2 = $conn->prepare("INSERT INTO contestant_details (user_id, event_id, age, height, vital_stats, hometown, motto, photo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt2->bind_param("iiisssss", $user_id, $event_id, $age, $height, $vital_stats, $hometown, $motto, $photo_name);
-        $stmt2->execute();
+        $photo_name = uploadPhoto($_FILES['photo']);
+        if (!$photo_name) {
+            header("Location: ../public/contestants.php?error=Photo upload failed");
+            exit();
+        }
 
-        $conn->commit();
-        header("Location: ../public/contestants.php?success=Contestant added successfully");
+        $conn->begin_transaction();
+        try {
+            $hashed_pass = password_hash($pass, PASSWORD_DEFAULT);
+            $stmt1 = $conn->prepare("INSERT INTO users (name, email, password, role, status) VALUES (?, ?, ?, 'Contestant', 'Active')");
+            $stmt1->bind_param("sss", $name, $email, $hashed_pass);
+            $stmt1->execute();
+            $user_id = $conn->insert_id;
 
-    } catch (Exception $e) {
-        $conn->rollback();
-        header("Location: ../public/contestants.php?error=Database Error");
+            $stmt2 = $conn->prepare("INSERT INTO contestant_details (user_id, event_id, age, height, vital_stats, hometown, motto, photo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt2->bind_param("iiisssss", $user_id, $event_id, $age, $height, $vital_stats, $hometown, $motto, $photo_name);
+            $stmt2->execute();
+            
+            $conn->commit();
+            header("Location: ../public/contestants.php?success=Contestant added");
+
+        } catch (Exception $e) {
+            $conn->rollback();
+            header("Location: ../public/contestants.php?error=Database Error");
+        }
+    } 
+
+    // --- UPDATE EXISTING ---
+    elseif ($action === 'update') {
+        $id = (int)$_POST['contestant_id']; // This is user_id
+        $pass = trim($_POST['password']);
+
+        $conn->begin_transaction();
+        try {
+            // 1. Update User Table (Name, Email, Pass)
+            if (!empty($pass)) {
+                $hashed_pass = password_hash($pass, PASSWORD_DEFAULT);
+                $stmt1 = $conn->prepare("UPDATE users SET name=?, email=?, password=? WHERE id=?");
+                $stmt1->bind_param("sssi", $name, $email, $hashed_pass, $id);
+            } else {
+                $stmt1 = $conn->prepare("UPDATE users SET name=?, email=? WHERE id=?");
+                $stmt1->bind_param("ssi", $name, $email, $id);
+            }
+            $stmt1->execute();
+
+            // 2. Handle Photo Update (Optional)
+            $photo_name = null;
+            if (isset($_FILES['photo']) && $_FILES['photo']['error'] === 0) {
+                $photo_name = uploadPhoto($_FILES['photo']);
+                if ($photo_name) {
+                    // Update details WITH photo
+                    $stmt2 = $conn->prepare("UPDATE contestant_details SET event_id=?, age=?, height=?, vital_stats=?, hometown=?, motto=?, photo=? WHERE user_id=?");
+                    $stmt2->bind_param("iisssssi", $event_id, $age, $height, $vital_stats, $hometown, $motto, $photo_name, $id);
+                }
+            }
+            
+            // If no photo uploaded, use query WITHOUT photo column
+            if (!$photo_name) {
+                $stmt2 = $conn->prepare("UPDATE contestant_details SET event_id=?, age=?, height=?, vital_stats=?, hometown=?, motto=? WHERE user_id=?");
+                $stmt2->bind_param("iissssi", $event_id, $age, $height, $vital_stats, $hometown, $motto, $id);
+            }
+            
+            $stmt2->execute();
+            $conn->commit();
+            header("Location: ../public/contestants.php?success=Contestant updated");
+
+        } catch (Exception $e) {
+            $conn->rollback();
+            header("Location: ../public/contestants.php?error=Update Failed");
+        }
     }
     exit();
 }
 
-// --- HANDLE GET ACTIONS (Approve / Reject / Remove) ---
+// Helper Function
+function uploadPhoto($file) {
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    $allowed = ['jpg', 'jpeg', 'png'];
+    if (in_array($ext, $allowed)) {
+        $new_name = "contestant_" . time() . "." . $ext;
+        $target = __DIR__ . '/../public/assets/uploads/contestants/' . $new_name;
+        if (move_uploaded_file($file['tmp_name'], $target)) {
+            return $new_name;
+        }
+    }
+    return false;
+}
+
+// --- HANDLE GET ACTIONS (Approve / Reject / Remove / Restore) ---
 if (isset($_GET['action']) && isset($_GET['id'])) {
+    
     $id = (int)$_GET['id'];
     $action = $_GET['action'];
     $my_id = $_SESSION['user_id'];
 
-    // We verify that the contestant belongs to an EVENT owned by THIS manager
-    // This prevents managers from deleting other managers' contestants
-    // SQL: Check if users.id (contestant) -> contestant_details.event_id -> events.user_id == me
-    
+    // 1. Security Check: Ensure this contestant belongs to an event created by THIS manager
     $check_auth = $conn->prepare("
         SELECT u.id 
         FROM users u
@@ -98,7 +140,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         exit();
     }
 
-    // Perform Action
+    // 2. Determine New Status
     $new_status = '';
     $msg = '';
 
@@ -109,16 +151,30 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         $new_status = 'Rejected';
         $msg = 'Application Rejected';
     } elseif ($action === 'remove') {
-        $new_status = 'Inactive'; // Soft Delete
+        $new_status = 'Inactive';
         $msg = 'Contestant Removed';
+    } elseif ($action === 'restore') {
+        $new_status = 'Active';
+        $msg = 'Contestant Restored';
     }
 
+    // 3. Execute Update
     if ($new_status) {
         $stmt = $conn->prepare("UPDATE users SET status = ? WHERE id = ?");
         $stmt->bind_param("si", $new_status, $id);
+        
         if ($stmt->execute()) {
-            // Redirect back to the correct tab
-            $tab = ($action === 'approve' || $action === 'reject') ? 'pending' : 'active';
+            // REDIRECT LOGIC
+            $tab = 'active'; // Default to official list
+
+            if ($action === 'remove') {
+                $tab = 'active'; // Stay on active list (so you see them vanish)
+            } elseif ($action === 'approve' || $action === 'reject') {
+                $tab = 'pending'; // Stay on pending
+            } elseif ($action === 'restore') {
+                $tab = 'active'; // Go to ACTIVE list so you see them back
+            }
+            
             header("Location: ../public/contestants.php?view=$tab&success=" . urlencode($msg));
         } else {
             header("Location: ../public/contestants.php?error=Action Failed");

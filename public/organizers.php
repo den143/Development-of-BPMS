@@ -4,13 +4,42 @@ requireLogin();
 requireRole('Event Manager');
 require_once __DIR__ . '/../app/config/database.php';
 
-// --- LOGIC: Handle "View Archived" Toggle ---
+// --- FILTER LOGIC ---
 $view = $_GET['view'] ?? 'active'; // Default to active
 $status_filter = ($view === 'archived') ? 'Inactive' : 'Active';
 
+$search = trim($_GET['search'] ?? '');
+$role_filter = $_GET['role'] ?? '';
+
 $my_id = $_SESSION['user_id'];
-$stmt = $conn->prepare("SELECT * FROM users WHERE created_by = ? AND status = ? ORDER BY created_at DESC");
-$stmt->bind_param("is", $my_id, $status_filter);
+
+// 1. Build Base Query
+$sql = "SELECT * FROM users WHERE created_by = ? AND status = ?";
+$types = "is";
+$params = [$my_id, $status_filter];
+
+// 2. Add Search Condition
+if (!empty($search)) {
+    $sql .= " AND (name LIKE ? OR email LIKE ?)";
+    $types .= "ss";
+    $searchTerm = "%$search%";
+    $params[] = $searchTerm;
+    $params[] = $searchTerm;
+}
+
+// 3. Add Role Filter Condition
+if (!empty($role_filter)) {
+    $sql .= " AND role = ?";
+    $types .= "s";
+    $params[] = $role_filter;
+}
+
+// 4. Add Ordering
+$sql .= " ORDER BY created_at DESC";
+
+// 5. Execute Dynamic Query
+$stmt = $conn->prepare($sql);
+$stmt->bind_param($types, ...$params);
 $stmt->execute();
 $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 ?>
@@ -22,6 +51,7 @@ $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manage Organizers - BPMS</title>
     <link rel="stylesheet" href="./assets/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         /* Header Layout */
         .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
@@ -33,19 +63,66 @@ $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
         .btn-secondary { background-color: white; border: 1px solid #d1d5db; color: #374151; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: 14px; display: inline-block; }
         .btn-secondary:hover { background-color: #f3f4f6; }
+
+        /* SEARCH BAR STYLES */
+        .search-container {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
         
-        .btn-edit { color: #2563eb; text-decoration: none; font-weight: 500; font-size: 14px; margin-right: 10px; cursor: pointer; border: none; background: none;}
-        .btn-edit:hover { text-decoration: underline; }
+        .search-input {
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            flex-grow: 1; /* Takes up remaining space */
+            font-size: 14px;
+        }
 
-        .btn-delete { color: #ef4444; text-decoration: none; font-weight: 500; font-size: 14px; }
-        .btn-delete:hover { text-decoration: underline; }
+        .filter-select {
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+            width: 200px;
+            cursor: pointer;
+        }
 
-        .btn-restore { color: #059669; text-decoration: none; font-weight: 500; font-size: 14px; }
-        .btn-restore:hover { text-decoration: underline; }
+        .btn-search {
+            background-color: #1f2937;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .btn-search:hover { background-color: #374151; }
+
+        .btn-reset {
+            color: #6b7280;
+            text-decoration: none;
+            font-size: 14px;
+            padding: 0 10px;
+        }
+        .btn-reset:hover { color: #1f2937; text-decoration: underline; }
+
+        /* --- BUTTON STYLES (MATCHING CONTESTANTS) --- */
+        .btn-sm { padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; text-decoration: none; border: none; display: inline-block; transition: opacity 0.2s; margin-right: 5px; }
+        .btn-sm:hover { opacity: 0.9; }
+
+        .btn-edit { background: #e0f2fe; color: #0284c7; }
+        .btn-remove { background: #fee2e2; color: #dc2626; }
+        .btn-restore { background: #d1fae5; color: #059669; }
 
         /* Data Table */
         .data-table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .data-table th, .data-table td { padding: 15px; text-align: left; border-bottom: 1px solid #f3f4f6; }
+        .data-table th, .data-table td { padding: 15px; text-align: left; border-bottom: 1px solid #f3f4f6; vertical-align: middle; }
         .data-table th { background-color: #f9fafb; font-weight: 600; color: #374151; }
         .data-table tr:hover { background-color: #ffffeb; }
 
@@ -58,7 +135,7 @@ $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         /* Modal & Form */
         .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 1000; }
         .modal-content { background: white; padding: 30px; width: 450px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
-        .form-group { margin-bottom: 15px; position: relative; } /* Relative for eye icon */
+        .form-group { margin-bottom: 15px; position: relative; } 
         .form-group label { display: block; margin-bottom: 5px; color: #374151; font-weight: 500; }
         .form-group input, .form-group select { width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; outline: none; }
         
@@ -66,14 +143,7 @@ $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         .btn-cancel { background: #e5e7eb; color: #374151; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; }
         .btn-submit { background: #F59E0B; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; }
 
-        /* Password Eye Icon */
-        .toggle-password {
-            position: absolute;
-            right: 15px;
-            top: 38px; /* Adjust based on label height */
-            cursor: pointer;
-            color: #6b7280;
-        }
+        .toggle-password { position: absolute; right: 15px; top: 38px; cursor: pointer; color: #6b7280; }
     </style>
 </head>
 <body>
@@ -101,6 +171,25 @@ $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                     </div>
                 </div>
 
+                <form method="GET" action="organizers.php" class="search-container">
+                    <input type="hidden" name="view" value="<?= htmlspecialchars($view) ?>">
+
+                    <input type="text" name="search" class="search-input" placeholder="Search by name or email..." value="<?= htmlspecialchars($search) ?>">
+                    
+                    <select name="role" class="filter-select">
+                        <option value="">All Roles</option>
+                        <option value="Judge Coordinator" <?= $role_filter === 'Judge Coordinator' ? 'selected' : '' ?>>Judge Coordinator</option>
+                        <option value="Contestant Manager" <?= $role_filter === 'Contestant Manager' ? 'selected' : '' ?>>Contestant Manager</option>
+                        <option value="Tabulator" <?= $role_filter === 'Tabulator' ? 'selected' : '' ?>>Tabulator</option>
+                    </select>
+
+                    <button type="submit" class="btn-search"><i class="fas fa-search"></i> Search</button>
+                    
+                    <?php if (!empty($search) || !empty($role_filter)): ?>
+                        <a href="organizers.php?view=<?= $view ?>" class="btn-reset">Reset</a>
+                    <?php endif; ?>
+                </form>
+
                 <table class="data-table">
                     <thead>
                         <tr>
@@ -108,14 +197,14 @@ $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                             <th>Role</th>
                             <th>Email</th>
                             <th>Phone</th>
-                            <th>Action</th>
+                            <th width="150">Action</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (empty($organizers)): ?>
                             <tr>
                                 <td colspan="5" style="text-align:center; color:#9ca3af; padding: 30px;">
-                                    No <?= $status_filter ?> organizers found.
+                                    No organizers found matching your criteria.
                                 </td>
                             </tr>
                         <?php else: ?>
@@ -137,14 +226,10 @@ $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                                     <td><?= htmlspecialchars($org['phone'] ?? '-') ?></td>
                                     <td>
                                         <?php if ($view === 'active'): ?>
-                                            <button class="btn-edit" 
-                                                onclick='openEditModal(<?= json_encode($org) ?>)'>
-                                                Edit
-                                            </button>
-                                            
-                                            <a href="../api/organizer.php?action=remove&id=<?= $org['id'] ?>" class="btn-delete" onclick="return confirm('Deactivate this organizer?');">Remove</a>
+                                            <button class="btn-sm btn-edit" onclick='openEditModal(<?= json_encode($org) ?>)'>Edit</button>
+                                            <a href="../api/organizer.php?action=remove&id=<?= $org['id'] ?>" class="btn-sm btn-remove" onclick="return confirm('Deactivate this organizer?');">Remove</a>
                                         <?php else: ?>
-                                            <a href="../api/organizer.php?action=restore&id=<?= $org['id'] ?>" class="btn-restore" onclick="return confirm('Restore this organizer?');">Restore</a>
+                                            <a href="../api/organizer.php?action=restore&id=<?= $org['id'] ?>" class="btn-sm btn-restore" onclick="return confirm('Restore this organizer?');">Restore</a>
                                         <?php endif; ?>
                                     </td>
                                 </tr>
@@ -174,19 +259,19 @@ $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                 </div>
                 <div class="form-group">
                     <label>Full Name</label>
-                    <input type="text" name="name" required>
+                    <input type="text" name="name" placeholder="e.g. Juan Dela Cruz" required>
                 </div>
                 <div class="form-group">
                     <label>Email Address</label>
-                    <input type="email" name="email" required>
+                    <input type="email" name="email" placeholder="organizer@email.com" required>
                 </div>
                 <div class="form-group">
                     <label>Phone Number</label>
-                    <input type="text" name="phone">
+                    <input type="text" name="phone" placeholder="0912...">
                 </div>
                 <div class="form-group">
                     <label>Password</label>
-                    <input type="password" name="password" id="addPass" required>
+                    <input type="password" name="password" id="addPass" placeholder="Enter password" required>
                     <i class="fas fa-eye toggle-password" onclick="togglePassword('addPass', this)"></i>
                 </div>
                 <div class="form-actions">
@@ -214,15 +299,15 @@ $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                 </div>
                 <div class="form-group">
                     <label>Full Name</label>
-                    <input type="text" name="name" id="edit_name" required>
+                    <input type="text" name="name" id="edit_name" placeholder="e.g. Juan Dela Cruz" required>
                 </div>
                 <div class="form-group">
                     <label>Email Address</label>
-                    <input type="email" name="email" id="edit_email" required>
+                    <input type="email" name="email" id="edit_email" placeholder="organizer@email.com" required>
                 </div>
                 <div class="form-group">
                     <label>Phone Number</label>
-                    <input type="text" name="phone" id="edit_phone">
+                    <input type="text" name="phone" id="edit_phone" placeholder="0912...">
                 </div>
                 <div class="form-group">
                     <label>Change Password (Optional)</label>
@@ -241,7 +326,6 @@ $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         function openModal(id) { document.getElementById(id).style.display = 'flex'; }
         function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
-        // Logic to populate Edit Modal
         function openEditModal(user) {
             document.getElementById('edit_id').value = user.id;
             document.getElementById('edit_name').value = user.name;
@@ -251,7 +335,6 @@ $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
             openModal('editModal');
         }
 
-        // Toggle Password Visibility
         function togglePassword(inputId, icon) {
             const input = document.getElementById(inputId);
             if (input.type === "password") {
@@ -279,8 +362,6 @@ $organizers = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('success')) showToast(urlParams.get('success'), 'success');
         if (urlParams.has('error')) showToast(urlParams.get('error'), 'error');
-        
-        // Clean URL but keep view param if exists
         if (urlParams.has('success') || urlParams.has('error')) {
             const newUrl = window.location.pathname + (urlParams.has('view') ? '?view=' + urlParams.get('view') : '');
             window.history.replaceState({}, document.title, newUrl);
