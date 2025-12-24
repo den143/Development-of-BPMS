@@ -15,7 +15,26 @@ $active_evt_query->bind_param("i", $u_id);
 $active_evt_query->execute();
 $active_event = $active_evt_query->get_result()->fetch_assoc();
 
-// --- 2. HANDLE FORM SUBMISSIONS ---
+// --- 2. FETCH TICKET DATA (If Active Event Exists) ---
+$tickets = [];
+$total_unused = 0;
+$total_used = 0;
+
+if ($active_event) {
+    $event_id = $active_event['id'];
+    
+    // Fetch Ticket Stats
+    $res = $conn->query("SELECT status, COUNT(*) as count FROM tickets WHERE event_id = $event_id GROUP BY status");
+    while($row = $res->fetch_assoc()) {
+        if ($row['status'] == 'Unused') $total_unused = $row['count'];
+        if ($row['status'] == 'Used') $total_used = $row['count'];
+    }
+
+    // Fetch Recent Tickets (Limit 100 for display performance)
+    $tickets = $conn->query("SELECT * FROM tickets WHERE event_id = $event_id ORDER BY created_at DESC LIMIT 100")->fetch_all(MYSQLI_ASSOC);
+}
+
+// --- 3. HANDLE FORM SUBMISSIONS ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     // A. UPDATE ACTIVE EVENT DETAILS
@@ -37,13 +56,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit();
     }
 
-    // B. UPDATE MY ACCOUNT (With Password Verification)
+    // B. UPDATE MY ACCOUNT
     if (isset($_POST['update_profile'])) {
         $name = trim($_POST['my_name']);
         $current_pass = $_POST['current_password'];
         $new_pass = trim($_POST['my_password']);
 
-        // 1. Verify Current Password
+        // Verify Current Password
         $verifyStmt = $conn->prepare("SELECT password FROM users WHERE id = ?");
         $verifyStmt->bind_param("i", $u_id);
         $verifyStmt->execute();
@@ -55,7 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit();
         }
 
-        // 2. Proceed with Update
+        // Proceed with Update
         if (!empty($new_pass)) {
             $hashed = password_hash($new_pass, PASSWORD_DEFAULT);
             $stmt = $conn->prepare("UPDATE users SET name=?, password=? WHERE id=?");
@@ -67,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($stmt->execute()) {
             $_SESSION['success'] = "Account updated successfully.";
-            $_SESSION['name'] = $name; // Update session name immediately
+            $_SESSION['name'] = $name;
         } else {
             $_SESSION['error'] = "Failed to update account.";
         }
@@ -76,7 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// --- 3. HANDLE SWITCH EVENT (GET) ---
+// --- 4. HANDLE SWITCH EVENT (GET) ---
 if (isset($_GET['open_id'])) {
     $open_id = (int) $_GET['open_id']; 
     $conn->begin_transaction();
@@ -153,14 +172,14 @@ $me = $me_stmt->get_result()->fetch_assoc();
         .card.active { display: block; animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 
-        .card-header { margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #f3f4f6; }
-        .card-header h3 { font-size: 18px; color: #111827; }
-        .card-header p { font-size: 13px; color: #6b7280; margin-top: 5px; }
+        .card-header { margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #f3f4f6; display:flex; justify-content:space-between; align-items:center; }
+        .card-header h3 { font-size: 18px; color: #111827; margin:0; }
+        .card-header p { font-size: 13px; color: #6b7280; margin-top: 5px; margin-bottom:0; }
 
         /* FORMS */
         .form-group { margin-bottom: 20px; position: relative; }
         .form-label { display: block; margin-bottom: 8px; font-weight: 600; color: #374151; font-size: 13px; }
-        .form-control { width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
+        .form-control { width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
         .btn-save { background-color: #F59E0B; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; }
         .btn-save:hover { background-color: #d97706; }
 
@@ -172,12 +191,26 @@ $me = $me_stmt->get_result()->fetch_assoc();
         .badge-active { background: #d1fae5; color: #065f46; }
         .badge-inactive { background: #f3f4f6; color: #6b7280; }
         
-        /* LOADING */
+        /* --- TICKET SPECIFIC STYLES --- */
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
+        .stat-box { background: #f9fafb; padding: 15px; border-radius: 6px; text-align: center; border: 1px solid #e5e7eb; }
+        .stat-num { font-size: 24px; font-weight: bold; color: #1f2937; }
+        .stat-label { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }
+
+        .ticket-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .ticket-table th { background: #f3f4f6; padding: 10px; text-align: left; color: #6b7280; font-size: 12px; }
+        .ticket-table td { padding: 10px; border-bottom: 1px solid #f3f4f6; font-family: 'Courier New', monospace; font-weight: bold; }
+        .status-used { color: #dc2626; background: #fee2e2; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-family: sans-serif; }
+        .status-unused { color: #059669; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-family: sans-serif; }
+
+        .btn-generate { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size:13px; }
+        .btn-print { background: #4b5563; color: white; text-decoration: none; padding: 8px 15px; border-radius: 6px; font-size: 13px; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; border: none; }
+        .btn-clear { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+
+        /* LOADING & UTILS */
         .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255, 255, 255, 0.95); display: none; justify-content: center; align-items: center; z-index: 2000; flex-direction: column; }
         .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #F59E0B; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        
-        /* Pass toggle */
         .toggle-password { position: absolute; right: 10px; top: 35px; cursor: pointer; color: #9ca3af; }
     </style>
 </head>
@@ -205,6 +238,9 @@ $me = $me_stmt->get_result()->fetch_assoc();
                         <a href="?tab=event_details" class="tab-btn <?= $active_tab == 'event_details' ? 'active' : '' ?>">
                             <i class="fas fa-sliders-h"></i> Event Configuration
                         </a>
+                        <a href="?tab=tickets" class="tab-btn <?= $active_tab == 'tickets' ? 'active' : '' ?>">
+                            <i class="fas fa-ticket-alt"></i> Audience Tickets
+                        </a>
                         <a href="?tab=history" class="tab-btn <?= $active_tab == 'history' ? 'active' : '' ?>">
                             <i class="fas fa-history"></i> Switch Event
                         </a>
@@ -217,8 +253,10 @@ $me = $me_stmt->get_result()->fetch_assoc();
                         
                         <div class="card <?= $active_tab == 'event_details' ? 'active' : '' ?>">
                             <div class="card-header">
-                                <h3>Current Event Configuration</h3>
-                                <p>Edit details for the currently active event.</p>
+                                <div>
+                                    <h3>Current Event Configuration</h3>
+                                    <p>Edit details for the currently active event.</p>
+                                </div>
                             </div>
 
                             <?php if (!$active_event): ?>
@@ -228,7 +266,6 @@ $me = $me_stmt->get_result()->fetch_assoc();
                             <?php else: ?>
                                 <form method="POST">
                                     <input type="hidden" name="event_id" value="<?= $active_event['id'] ?>">
-                                    
                                     <div class="form-group">
                                         <label class="form-label">Event Name</label>
                                         <input type="text" name="event_name" class="form-control" value="<?= htmlspecialchars($active_event['name']) ?>" required>
@@ -248,8 +285,91 @@ $me = $me_stmt->get_result()->fetch_assoc();
                             <?php endif; ?>
                         </div>
 
+                        <div class="card <?= $active_tab == 'tickets' ? 'active' : '' ?>">
+                            <div class="card-header">
+                                <div>
+                                    <h3>Audience Voting Tickets</h3>
+                                    <p>Generate unique codes for "People's Choice" voting.</p>
+                                </div>
+                                <?php if ($active_event): ?>
+                                <button class="btn-print" onclick="printTickets()"><i class="fas fa-print"></i> Print List</button>
+                                <?php endif; ?>
+                            </div>
+
+                            <?php if (!$active_event): ?>
+                                <div style="text-align:center; padding:20px; color:#9ca3af;">
+                                    <i class="fas fa-exclamation-circle"></i> No active event selected.
+                                </div>
+                            <?php else: ?>
+                                
+                                <div class="stats-grid">
+                                    <div class="stat-box">
+                                        <div class="stat-num" style="color:#059669;"><?= $total_unused ?></div>
+                                        <div class="stat-label">Available Tickets</div>
+                                    </div>
+                                    <div class="stat-box">
+                                        <div class="stat-num" style="color:#dc2626;"><?= $total_used ?></div>
+                                        <div class="stat-label">Votes Cast (Used)</div>
+                                    </div>
+                                </div>
+
+                                <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:20px; background:#f9fafb; padding:15px; border-radius:8px; flex-wrap:wrap;">
+                                    <form action="../api/tickets.php" method="POST" style="display:flex; gap:10px; align-items:flex-end; flex:1;">
+                                        <input type="hidden" name="action" value="generate">
+                                        <input type="hidden" name="event_id" value="<?= $active_event['id'] ?>">
+                                        <div style="flex:1; max-width:200px;">
+                                            <label style="display:block; font-size:13px; margin-bottom:5px; color:#4b5563;">Generate Quantity</label>
+                                            <input type="number" name="quantity" class="form-control" value="50" min="1" max="500">
+                                        </div>
+                                        <button type="submit" class="btn-generate">Generate Codes</button>
+                                    </form>
+                                    
+                                    <div style="margin-left:auto;">
+                                        <form action="../api/tickets.php" method="POST" onsubmit="return confirm('Are you sure? This will delete all UNUSED tickets.');">
+                                            <input type="hidden" name="action" value="clear_unused">
+                                            <input type="hidden" name="event_id" value="<?= $active_event['id'] ?>">
+                                            <button type="submit" class="btn-clear"><i class="fas fa-trash"></i> Clear Unused</button>
+                                        </form>
+                                    </div>
+                                </div>
+
+                                <div style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px;">
+                                    <table class="ticket-table" id="printableTable">
+                                        <thead>
+                                            <tr>
+                                                <th>#</th>
+                                                <th>Ticket Code</th>
+                                                <th>Status</th>
+                                                <th>Generated Date</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php if (empty($tickets)): ?>
+                                                <tr><td colspan="4" style="text-align:center; padding:20px;">No tickets generated yet.</td></tr>
+                                            <?php else: ?>
+                                                <?php foreach ($tickets as $index => $t): ?>
+                                                    <tr>
+                                                        <td style="color:#9ca3af; font-family:sans-serif;"><?= $index + 1 ?></td>
+                                                        <td style="font-size:16px; letter-spacing:1px;"><?= htmlspecialchars($t['code']) ?></td>
+                                                        <td>
+                                                            <span class="<?= ($t['status'] == 'Used') ? 'status-used' : 'status-unused' ?>">
+                                                                <?= $t['status'] ?>
+                                                            </span>
+                                                        </td>
+                                                        <td style="font-family:sans-serif; font-weight:normal; font-size:12px; color:#6b7280;">
+                                                            <?= date('M d, Y h:i A', strtotime($t['created_at'])) ?>
+                                                        </td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+
                         <div class="card <?= $active_tab == 'history' ? 'active' : '' ?>">
-                            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                            <div class="card-header">
                                 <div>
                                     <h3>Event Switcher</h3>
                                     <p>Manage multiple pageants and switch between them.</p>
@@ -289,8 +409,10 @@ $me = $me_stmt->get_result()->fetch_assoc();
 
                         <div class="card <?= $active_tab == 'account' ? 'active' : '' ?>">
                             <div class="card-header">
-                                <h3>Account Settings</h3>
-                                <p>Manage your login credentials.</p>
+                                <div>
+                                    <h3>Account Settings</h3>
+                                    <p>Manage your login credentials.</p>
+                                </div>
                             </div>
                             <form method="POST">
                                 <div class="form-group">
@@ -354,7 +476,6 @@ $me = $me_stmt->get_result()->fetch_assoc();
             }
         }
 
-        // Toggle Password Visibility
         function togglePassword(inputId, icon) {
             const input = document.getElementById(inputId);
             if (input.type === "password") {
@@ -366,6 +487,20 @@ $me = $me_stmt->get_result()->fetch_assoc();
                 icon.classList.remove("fa-eye-slash");
                 icon.classList.add("fa-eye");
             }
+        }
+
+        // --- NEW: PRINT TICKETS ---
+        function printTickets() {
+            var divToPrint = document.getElementById("printableTable");
+            var newWin = window.open("");
+            newWin.document.write("<html><head><title>Ticket Codes</title>");
+            newWin.document.write("<style>body{font-family: sans-serif;} table{width:100%; border-collapse:collapse;} th, td{border:1px solid #000; padding:8px; text-align:left;} th{background:#eee;}</style>");
+            newWin.document.write("</head><body>");
+            newWin.document.write("<h3>Audience Tickets for <?= htmlspecialchars($active_event['name'] ?? 'Event') ?></h3>");
+            newWin.document.write(divToPrint.outerHTML);
+            newWin.document.write("</body></html>");
+            newWin.print();
+            newWin.close();
         }
 
         // Toast Logic
@@ -387,6 +522,16 @@ $me = $me_stmt->get_result()->fetch_assoc();
             showToast("<?= $_SESSION['error'] ?>", "error");
             <?php unset($_SESSION['error']); ?>
         <?php endif; ?>
+        
+        // Handle URL Params for Success/Error (e.g. from Ticket API)
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('success')) showToast(urlParams.get('success'), 'success');
+        if (urlParams.has('error')) showToast(urlParams.get('error'), 'error');
+        if (urlParams.has('success') || urlParams.has('error')) {
+            // Clean URL but keep current tab
+            const newUrl = window.location.pathname + "?tab=" + "<?= $active_tab ?>";
+            window.history.replaceState({}, document.title, newUrl);
+        }
     </script>
 </body>
 </html>
