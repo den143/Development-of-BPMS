@@ -45,8 +45,7 @@ if ($event_id) {
     $c_stmt->execute();
     $count_contestants = $c_stmt->get_result()->fetch_assoc()['total'];
 
-    // B. Count Active Judges (UPDATED)
-    // We count links in 'event_judges' that are marked 'Active'
+    // B. Count Active Judges
     $j_stmt = $conn->prepare("
         SELECT COUNT(*) as total 
         FROM event_judges 
@@ -56,8 +55,11 @@ if ($event_id) {
     $j_stmt->execute();
     $count_judges = $j_stmt->get_result()->fetch_assoc()['total'];
     
-    // C. Count Rounds (Placeholder for Criteria Module)
-    // $r_stmt = ...
+    // C. Count Rounds (NOW IMPLEMENTED)
+    $r_stmt = $conn->prepare("SELECT COUNT(*) as total FROM rounds WHERE event_id = ?");
+    $r_stmt->bind_param("i", $event_id);
+    $r_stmt->execute();
+    $count_rounds = $r_stmt->get_result()->fetch_assoc()['total'];
 }
 
 // Capture session messages
@@ -209,14 +211,14 @@ unset($_SESSION['success'], $_SESSION['error'], $_SESSION['show_modal']);
                             </li>
 
                              <li class="checklist-item">
-                                <div class="check-icon pending">
-                                    <i class="fas fa-exclamation"></i>
+                                <div class="check-icon <?= $count_rounds > 0 ? 'done' : 'pending' ?>">
+                                    <i class="fas <?= $count_rounds > 0 ? 'fa-check' : 'fa-exclamation' ?>"></i>
                                 </div>
                                 <div class="task-content">
-                                    <strong>Setup Criteria & Segments</strong>
-                                    <span>Define how contestants will be scored.</span>
+                                    <strong>Setup Rounds & Criteria</strong>
+                                    <span>Define rounds, segments, and criteria.</span>
                                 </div>
-                                <a href="criteria.php" class="btn-action">Setup</a>
+                                <a href="rounds.php" class="btn-action">Setup</a>
                             </li>
                         </ul>
                     </div>

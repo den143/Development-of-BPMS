@@ -22,7 +22,9 @@
         <li><a href="organizers.php" class="<?= isActive('organizers.php') ?>"><i class="fas fa-user-tie"></i> <span>Manage Organizers</span></a></li>
         <li><a href="contestants.php" class="<?= isActive('contestants.php') ?>"><i class="fas fa-female"></i> <span>Register Contestant</span></a></li>
         <li><a href="judges.php" class="<?= isActive('judges.php') ?>"><i class="fas fa-gavel"></i> <span>Register Judge</span></a></li>
-        <li><a href="rounds.php" class="<?= isActive('rounds.php') ?>"><i class="fas fa-list-ol"></i> <span>Manage Rounds</span></a></li>
+        
+        <li><a href="rounds.php" class="<?= isActive('rounds.php') ?>"><i class="fas fa-layer-group"></i> <span>Manage Rounds</span></a></li>
+        
         <li><a href="criteria.php" class="<?= isActive('criteria.php') ?>"><i class="fas fa-clipboard-list"></i> <span>Segments & Criteria</span></a></li>
         <li><a href="activities.php" class="<?= isActive('activities.php') ?>"><i class="fas fa-calendar-check"></i> <span>Manage Activities</span></a></li>
         <li><a href="awards.php" class="<?= isActive('awards.php') ?>"><i class="fas fa-trophy"></i> <span>Manage Awards</span></a></li>
