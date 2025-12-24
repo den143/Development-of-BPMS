@@ -6,12 +6,8 @@ require_once __DIR__ . '/../app/config/database.php';
 
 // HELPER: Validate "Funnel Logic"
 function validateAdvancement($conn, $event_id, $current_order, $current_top_n) {
-    // 1. Basic Sanity Check
-    if ($current_top_n < 1) {
-        return "Invalid Number: You must advance at least 1 contestant.";
-    }
+    if ($current_top_n < 1) return "Invalid Number: You must advance at least 1 contestant.";
 
-    // 2. Find the round immediately before this one
     $prev_order = $current_order - 1;
     if ($prev_order < 1) return true; 
 
@@ -23,18 +19,53 @@ function validateAdvancement($conn, $event_id, $current_order, $current_top_n) {
     if ($prev) {
         $prev_n = (int)$prev['contestants_to_advance'];
         
-        // BLOCKER: If previous round was "Winner", you can't add more rounds!
         if ($prev['advancement_rule'] === 'winner') {
-            return "Action Denied: The previous round '{$prev['title']}' already declared a Final Winner. You cannot add a round after the Finals.";
+            return "Action Denied: The previous round '{$prev['title']}' already declared a Final Winner.";
         }
-
-        // Standard Funnel: New Top N must be strictly less than previous
         if ($current_top_n >= $prev_n) {
-            return "Invalid Configuration: The number of winners ($current_top_n) must be LESS than the previous round '{$prev['title']}' ($prev_n).";
+            return "Invalid Configuration: Winners ($current_top_n) must be LESS than previous round ($prev_n).";
         }
     }
     return true;
 }
+
+// [NEW] HELPER: Strict Configuration Check
+function validateRoundConfiguration($conn, $round_id) {
+    // 1. Check if Segments sum to 100%
+    $stmt = $conn->prepare("SELECT SUM(weight_percentage) as total FROM segments WHERE round_id = ?");
+    $stmt->bind_param("i", $round_id);
+    $stmt->execute();
+    $res = $stmt->get_result()->fetch_assoc();
+    $seg_total = (float)($res['total'] ?? 0);
+
+    if ($seg_total !== 100.00) {
+        return "Cannot Start: Total Segment Weight is $seg_total%. It must be exactly 100%.";
+    }
+
+    // 2. Check if EACH Segment has 100 Points of Criteria
+    // We find any segment that DOES NOT sum to 100
+    $sql = "
+        SELECT s.title, SUM(c.max_score) as criteria_total 
+        FROM segments s 
+        LEFT JOIN criteria c ON s.id = c.segment_id 
+        WHERE s.round_id = ? 
+        GROUP BY s.id 
+        HAVING criteria_total != 100.00 OR criteria_total IS NULL
+    ";
+    $stmt2 = $conn->prepare($sql);
+    $stmt2->bind_param("i", $round_id);
+    $stmt2->execute();
+    $invalid_segments = $stmt2->get_result();
+
+    if ($invalid_segments->num_rows > 0) {
+        $bad_seg = $invalid_segments->fetch_assoc();
+        $bad_score = (float)($bad_seg['criteria_total'] ?? 0);
+        return "Cannot Start: Segment '{$bad_seg['title']}' has incomplete criteria ($bad_score/100 pts).";
+    }
+
+    return true;
+}
+
 
 // --- 1. ADD ROUND ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add') {
@@ -45,34 +76,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $rule     = $_POST['advancement_rule'];
     $advance  = (int)$_POST['contestants_to_advance'];
 
-    if ($rule === 'winner') {
-        $advance = 1;
-    }
+    if ($rule === 'winner') $advance = 1;
 
     if (empty($title)) {
         header("Location: ../public/rounds.php?error=Title is required");
         exit();
     }
 
-    // [FIXED] Run Validation
     if ($rule === 'top_n') {
         $check = validateAdvancement($conn, $event_id, $order, $advance);
-        if ($check !== true) {
-            header("Location: ../public/rounds.php?error=" . urlencode($check));
-            exit();
-        }
-    } 
-    // Even if it is a 'winner' round, we check if the PREVIOUS round allows it
-    else {
-        // Just verify we aren't adding a winner round AFTER another winner round
+        if ($check !== true) { header("Location: ../public/rounds.php?error=" . urlencode($check)); exit(); }
+    } else {
         $check = validateAdvancement($conn, $event_id, $order, 1);
-        if ($check !== true) {
-            header("Location: ../public/rounds.php?error=" . urlencode($check));
-            exit();
-        }
+        if ($check !== true) { header("Location: ../public/rounds.php?error=" . urlencode($check)); exit(); }
     }
 
-    // Prevent Duplicate Order
     $dupCheck = $conn->query("SELECT id FROM rounds WHERE event_id = $event_id AND ordering = $order");
     if ($dupCheck->num_rows > 0) {
         header("Location: ../public/rounds.php?error=Order #$order already exists.");
@@ -102,11 +120,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $rule     = $_POST['advancement_rule'];
     $advance  = (int)$_POST['contestants_to_advance'];
 
-    if ($rule === 'winner') {
-        $advance = 1;
-    }
+    if ($rule === 'winner') $advance = 1;
 
-    // [FIXED] Run Validation on Update too
     $check = validateAdvancement($conn, $event_id, $order, $advance);
     if ($check !== true) {
         header("Location: ../public/rounds.php?error=" . urlencode($check));
@@ -124,47 +139,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
-// ... (Keep DELETE, SET ACTIVE, and STOP ROUND exactly as they were in the previous file) ...
-// --- 3. DELETE ROUND (With Safety Check) ---
+// --- 3. DELETE ROUND ---
 if (isset($_GET['action']) && $_GET['action'] === 'delete') {
     $id = (int)$_GET['id'];
     
-    // A. Check if round is Active
     $check = $conn->query("SELECT status FROM rounds WHERE id = $id");
     if ($check->fetch_assoc()['status'] === 'Active') {
-        header("Location: ../public/rounds.php?error=Cannot delete an Active round. Please deactivate it first.");
+        header("Location: ../public/rounds.php?error=Cannot delete an Active round.");
         exit();
     }
 
-    // B. Check if Scores exist for this round
     $scoreCheck = $conn->prepare("SELECT id FROM scores WHERE round_id = ? LIMIT 1");
     $scoreCheck->bind_param("i", $id);
     $scoreCheck->execute();
     
     if ($scoreCheck->get_result()->num_rows > 0) {
-        header("Location: ../public/rounds.php?error=Cannot delete: Scores have already been submitted for this round.");
+        header("Location: ../public/rounds.php?error=Cannot delete: Scores exist.");
         exit();
     }
 
-    // C. Proceed with Delete
     $conn->query("DELETE FROM rounds WHERE id = $id");
     header("Location: ../public/rounds.php?success=Round deleted");
     exit();
 }
 
-// --- 4. SET ACTIVE ROUND ---
+// --- 4. SET ACTIVE ROUND (With Strict Validation) ---
 if (isset($_GET['action']) && $_GET['action'] === 'set_active') {
     $round_id = (int)$_GET['id'];
     $event_id = (int)$_GET['event_id'];
 
+    // [NEW] Run Configuration Validation
+    $configCheck = validateRoundConfiguration($conn, $round_id);
+    if ($configCheck !== true) {
+        header("Location: ../public/rounds.php?error=" . urlencode($configCheck));
+        exit();
+    }
+
     $conn->begin_transaction();
     try {
-        // A. Set ALL rounds for this event to 'Pending'
+        // Set all to Pending
         $reset = $conn->prepare("UPDATE rounds SET status = 'Pending' WHERE event_id = ? AND status = 'Active'");
         $reset->bind_param("i", $event_id);
         $reset->execute();
 
-        // B. Set SELECTED round to 'Active'
+        // Set selected to Active
         $set = $conn->prepare("UPDATE rounds SET status = 'Active' WHERE id = ?");
         $set->bind_param("i", $round_id);
         $set->execute();
@@ -178,39 +196,35 @@ if (isset($_GET['action']) && $_GET['action'] === 'set_active') {
     exit();
 }
 
-// --- 5. STOP ROUND (Emergency Stop) ---
+// --- 5. STOP ROUND ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'stop_round') {
     $round_id = (int)$_POST['round_id'];
     $password = $_POST['password'];
     $manager_id = $_SESSION['user_id'];
 
-    // A. Verify Password
     $u_stmt = $conn->prepare("SELECT password FROM users WHERE id = ?");
     $u_stmt->bind_param("i", $manager_id);
     $u_stmt->execute();
     $user = $u_stmt->get_result()->fetch_assoc();
 
     if (!password_verify($password, $user['password'])) {
-        header("Location: ../public/rounds.php?error=Incorrect Password. Cannot stop round.");
+        header("Location: ../public/rounds.php?error=Incorrect Password.");
         exit();
     }
 
-    // B. Check for Scores (Safety Lock)
-    // "As long as judges did not enter even 1 score"
     $s_check = $conn->prepare("SELECT id FROM scores WHERE round_id = ? LIMIT 1");
     $s_check->bind_param("i", $round_id);
     $s_check->execute();
     if ($s_check->get_result()->num_rows > 0) {
-        header("Location: ../public/rounds.php?error=CANNOT STOP: Judges have already submitted scores. Hard reset required by IT.");
+        header("Location: ../public/rounds.php?error=CANNOT STOP: Scores exist.");
         exit();
     }
 
-    // C. Stop the Round (Set to Pending)
     $stmt = $conn->prepare("UPDATE rounds SET status = 'Pending' WHERE id = ?");
     $stmt->bind_param("i", $round_id);
     $stmt->execute();
 
-    header("Location: ../public/rounds.php?success=Round stopped successfully. It is now Pending.");
+    header("Location: ../public/rounds.php?success=Round stopped.");
     exit();
 }
 ?>

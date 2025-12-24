@@ -1,5 +1,5 @@
 <?php
-// Enable Error Reporting for debugging (Remove in production)
+// Enable Error Reporting
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
@@ -9,8 +9,9 @@ requireLogin();
 requireRole('Event Manager');
 require_once __DIR__ . '/../app/config/database.php';
 
-// HELPER: Check if Round is Locked (Active or Completed)
-// Prevents editing configuration while the round is live.
+// --- HELPER FUNCTIONS ---
+
+// 1. Check if Round is Locked
 function checkRoundLock($conn, $round_id) {
     $stmt = $conn->prepare("SELECT status, title FROM rounds WHERE id = ?");
     $stmt->bind_param("i", $round_id);
@@ -18,64 +19,140 @@ function checkRoundLock($conn, $round_id) {
     $res = $stmt->get_result()->fetch_assoc();
     
     if ($res && ($res['status'] === 'Active' || $res['status'] === 'Completed')) {
-        // Redirect back with specific error
-        $status = $res['status'];
-        $title = $res['title'];
-        header("Location: ../public/criteria.php?round_id=$round_id&error=Action Denied: You cannot modify '$title' because it is currently $status.");
+        header("Location: ../public/criteria.php?round_id=$round_id&error=Action Denied: Round is {$res['status']}.");
         exit();
     }
 }
 
+// 2. Validate Segment Weight (Max 100%)
+function validateSegmentWeight($conn, $round_id, $new_weight, $exclude_segment_id = null) {
+    $sql = "SELECT SUM(weight_percentage) as total FROM segments WHERE round_id = ?";
+    if ($exclude_segment_id) $sql .= " AND id != $exclude_segment_id";
+    
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("i", $round_id);
+    $stmt->execute();
+    $res = $stmt->get_result()->fetch_assoc();
+    $current_total = (float)($res['total'] ?? 0);
+    
+    if (($current_total + $new_weight) > 100) {
+        return "Validation Error: Total weight cannot exceed 100%. Current: $current_total%, You tried adding: $new_weight%.";
+    }
+    return true;
+}
+
+// 3. Validate Criteria Score (Max 100pts)
+function validateCriteriaScore($conn, $segment_id, $new_score, $exclude_crit_id = null) {
+    $sql = "SELECT SUM(max_score) as total FROM criteria WHERE segment_id = ?";
+    if ($exclude_crit_id) $sql .= " AND id != $exclude_crit_id";
+    
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("i", $segment_id);
+    $stmt->execute();
+    $res = $stmt->get_result()->fetch_assoc();
+    $current_total = (float)($res['total'] ?? 0);
+    
+    if (($current_total + $new_score) > 100) {
+        return "Validation Error: Total points cannot exceed 100. Current: $current_total, You tried adding: $new_score.";
+    }
+    return true;
+}
+
+// 4. [NEW] Validate Unique Order
+function validateUniqueOrder($conn, $type, $parent_id, $order, $exclude_id = null) {
+    if ($type === 'segment') {
+        $sql = "SELECT title FROM segments WHERE round_id = ? AND ordering = ?";
+        if ($exclude_id) $sql .= " AND id != $exclude_id";
+    } else {
+        $sql = "SELECT title FROM criteria WHERE segment_id = ? AND ordering = ?";
+        if ($exclude_id) $sql .= " AND id != $exclude_id";
+    }
+
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("ii", $parent_id, $order);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    if ($res->num_rows > 0) {
+        $existing = $res->fetch_assoc();
+        return "Order #$order is already used by '{$existing['title']}'. Please choose a different order number.";
+    }
+    return true;
+}
+
+
 // --- 1. SEGMENT ACTIONS ---
+
+// ADD SEGMENT
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_segment') {
-    
     $round_id = (int)$_POST['round_id'];
-    
-    // [SECURITY] Run Lock Check
     checkRoundLock($conn, $round_id);
 
     $title    = trim($_POST['title']);
     $desc     = trim($_POST['description']);
-    $weight   = $_POST['weight_percentage']; 
+    $weight   = (float)$_POST['weight_percentage']; 
     $order    = (int)$_POST['ordering'];
 
-    // CHECK: Prepare Statement
-    $stmt = $conn->prepare("INSERT INTO segments (round_id, title, description, weight_percentage, ordering) VALUES (?, ?, ?, ?, ?)");
-    
-    if (!$stmt) {
-        die("Database Error: " . $conn->error);
-    }
+    // Validations
+    $checkW = validateSegmentWeight($conn, $round_id, $weight);
+    if ($checkW !== true) { header("Location: ../public/criteria.php?round_id=$round_id&error=" . urlencode($checkW)); exit(); }
 
+    $checkO = validateUniqueOrder($conn, 'segment', $round_id, $order);
+    if ($checkO !== true) { header("Location: ../public/criteria.php?round_id=$round_id&error=" . urlencode($checkO)); exit(); }
+
+    $stmt = $conn->prepare("INSERT INTO segments (round_id, title, description, weight_percentage, ordering) VALUES (?, ?, ?, ?, ?)");
+    if (!$stmt) die("Database Error: " . $conn->error);
     $stmt->bind_param("issdi", $round_id, $title, $desc, $weight, $order);
 
     if ($stmt->execute()) {
         header("Location: ../public/criteria.php?round_id=$round_id&success=Segment added");
     } else {
-        header("Location: ../public/criteria.php?round_id=$round_id&error=Failed to add segment: " . $stmt->error);
+        header("Location: ../public/criteria.php?round_id=$round_id&error=Failed to add segment");
     }
     exit();
 }
 
-// --- 2. DELETE SEGMENT ---
+// UPDATE SEGMENT
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_segment') {
+    $seg_id   = (int)$_POST['segment_id'];
+    $round_id = (int)$_POST['round_id'];
+    checkRoundLock($conn, $round_id);
+
+    $title    = trim($_POST['title']);
+    $desc     = trim($_POST['description']);
+    $weight   = (float)$_POST['weight_percentage'];
+    $order    = (int)$_POST['ordering'];
+
+    // Validations (Exclude self)
+    $checkW = validateSegmentWeight($conn, $round_id, $weight, $seg_id);
+    if ($checkW !== true) { header("Location: ../public/criteria.php?round_id=$round_id&error=" . urlencode($checkW)); exit(); }
+
+    $checkO = validateUniqueOrder($conn, 'segment', $round_id, $order, $seg_id);
+    if ($checkO !== true) { header("Location: ../public/criteria.php?round_id=$round_id&error=" . urlencode($checkO)); exit(); }
+
+    $stmt = $conn->prepare("UPDATE segments SET title=?, description=?, weight_percentage=?, ordering=? WHERE id=?");
+    $stmt->bind_param("ssdii", $title, $desc, $weight, $order, $seg_id);
+
+    if ($stmt->execute()) {
+        header("Location: ../public/criteria.php?round_id=$round_id&success=Segment updated");
+    } else {
+        header("Location: ../public/criteria.php?round_id=$round_id&error=Update failed");
+    }
+    exit();
+}
+
+// DELETE SEGMENT
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_segment') {
     $id = (int)$_POST['segment_id'];
     $r_id = (int)$_POST['round_id'];
-    
-    // [SECURITY] Run Lock Check
     checkRoundLock($conn, $r_id);
 
-    // [SAFETY] Check if judges have started scoring this segment
-    $check = $conn->prepare("
-        SELECT s.id FROM scores s 
-        JOIN criteria c ON s.criteria_id = c.id 
-        WHERE c.segment_id = ? 
-        LIMIT 1
-    ");
+    $check = $conn->prepare("SELECT s.id FROM scores s JOIN criteria c ON s.criteria_id = c.id WHERE c.segment_id = ? LIMIT 1");
     $check->bind_param("i", $id);
     $check->execute();
 
     if ($check->get_result()->num_rows > 0) {
-        header("Location: ../public/criteria.php?round_id=$r_id&error=Cannot delete: Judges have already started scoring this segment.");
+        header("Location: ../public/criteria.php?round_id=$r_id&error=Cannot delete: Scores exist.");
         exit();
     }
 
@@ -85,52 +162,82 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 }
 
 
-// --- 3. CRITERIA ACTIONS ---
+// --- 2. CRITERIA ACTIONS ---
+
+// ADD CRITERIA
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_criteria') {
-    
     $segment_id = (int)$_POST['segment_id'];
     $r_id       = (int)$_POST['round_id'];
-
-    // [SECURITY] Run Lock Check
     checkRoundLock($conn, $r_id);
 
     $title      = trim($_POST['title']);
     $desc       = trim($_POST['description']); 
-    $max_score  = $_POST['max_score'];
+    $max_score  = (float)$_POST['max_score'];
     $order      = (int)$_POST['ordering'];
 
-    // CHECK: Prepare Statement
-    $stmt = $conn->prepare("INSERT INTO criteria (segment_id, title, description, max_score, ordering) VALUES (?, ?, ?, ?, ?)");
-    
-    if (!$stmt) {
-        die("Database Error: " . $conn->error);
-    }
+    // Validations
+    $checkS = validateCriteriaScore($conn, $segment_id, $max_score);
+    if ($checkS !== true) { header("Location: ../public/criteria.php?round_id=$r_id&error=" . urlencode($checkS)); exit(); }
 
+    $checkO = validateUniqueOrder($conn, 'criteria', $segment_id, $order);
+    if ($checkO !== true) { header("Location: ../public/criteria.php?round_id=$r_id&error=" . urlencode($checkO)); exit(); }
+
+    $stmt = $conn->prepare("INSERT INTO criteria (segment_id, title, description, max_score, ordering) VALUES (?, ?, ?, ?, ?)");
+    if (!$stmt) die("Database Error: " . $conn->error);
     $stmt->bind_param("issdi", $segment_id, $title, $desc, $max_score, $order);
 
     if ($stmt->execute()) {
         header("Location: ../public/criteria.php?round_id=$r_id&success=Criteria added");
     } else {
-        header("Location: ../public/criteria.php?round_id=$r_id&error=Failed to add criteria: " . $stmt->error);
+        header("Location: ../public/criteria.php?round_id=$r_id&error=Failed to add criteria");
     }
     exit();
 }
 
-// --- 4. DELETE CRITERIA ---
+// UPDATE CRITERIA
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_criteria') {
+    $crit_id    = (int)$_POST['criteria_id'];
+    $r_id       = (int)$_POST['round_id'];
+    checkRoundLock($conn, $r_id);
+    
+    $segCheck = $conn->query("SELECT segment_id FROM criteria WHERE id = $crit_id")->fetch_assoc();
+    $segment_id = $segCheck['segment_id'];
+
+    $title      = trim($_POST['title']);
+    $desc       = trim($_POST['description']); 
+    $max_score  = (float)$_POST['max_score'];
+    $order      = (int)$_POST['ordering'];
+
+    // Validations (Exclude self)
+    $checkS = validateCriteriaScore($conn, $segment_id, $max_score, $crit_id);
+    if ($checkS !== true) { header("Location: ../public/criteria.php?round_id=$r_id&error=" . urlencode($checkS)); exit(); }
+
+    $checkO = validateUniqueOrder($conn, 'criteria', $segment_id, $order, $crit_id);
+    if ($checkO !== true) { header("Location: ../public/criteria.php?round_id=$r_id&error=" . urlencode($checkO)); exit(); }
+
+    $stmt = $conn->prepare("UPDATE criteria SET title=?, description=?, max_score=?, ordering=? WHERE id=?");
+    $stmt->bind_param("ssdii", $title, $desc, $max_score, $order, $crit_id);
+
+    if ($stmt->execute()) {
+        header("Location: ../public/criteria.php?round_id=$r_id&success=Criteria updated");
+    } else {
+        header("Location: ../public/criteria.php?round_id=$r_id&error=Update failed");
+    }
+    exit();
+}
+
+// DELETE CRITERIA
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_criteria') {
     $id = (int)$_POST['criteria_id'];
     $r_id = (int)$_POST['round_id'];
-    
-    // [SECURITY] Run Lock Check
     checkRoundLock($conn, $r_id);
 
-    // [SAFETY] Check if judges have scored this specific criteria
     $check = $conn->prepare("SELECT id FROM scores WHERE criteria_id = ? LIMIT 1");
     $check->bind_param("i", $id);
     $check->execute();
 
     if ($check->get_result()->num_rows > 0) {
-        header("Location: ../public/criteria.php?round_id=$r_id&error=Cannot delete: Judges have already submitted scores for this criteria.");
+        header("Location: ../public/criteria.php?round_id=$r_id&error=Cannot delete: Scores exist.");
         exit();
     }
     
