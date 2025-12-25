@@ -1,4 +1,5 @@
 <?php
+// bpms/api/tally.php
 // Enable Error Reporting for debugging
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
@@ -6,7 +7,6 @@ error_reporting(E_ALL);
 header('Content-Type: application/json');
 
 require_once __DIR__ . '/../app/core/guard.php';
-// We allow 'Event Manager' to view, but only 'Tabulator' to Lock.
 requireLogin(); 
 require_once __DIR__ . '/../app/config/database.php';
 require_once __DIR__ . '/../app/models/ScoreCalculator.php';
@@ -20,7 +20,6 @@ function getRoundMetadata($conn, $round_id) {
     $event_id = $round_data['event_id'];
 
     // 2. Get Active Judges (for Table Columns)
-    // Ordered by ID or Name to ensure columns stay in same order
     $j_sql = "SELECT u.id, u.name 
               FROM event_judges ej 
               JOIN users u ON ej.judge_id = u.id 
@@ -52,14 +51,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         exit();
     }
 
-    // 2. Calculate Scores (Using our new Model)
+    // 2. [NEW] Fetch Submitted Judge IDs for Progress Tracking
+    $submitted_q = $conn->query("SELECT judge_id FROM judge_round_status WHERE round_id = $round_id AND status = 'Submitted'");
+    $submitted_ids = [];
+    while($r = $submitted_q->fetch_assoc()) {
+        $submitted_ids[] = (int)$r['judge_id'];
+    }
+
+    // 3. Calculate Scores
     $results = ScoreCalculator::calculate($round_id);
 
-    // 3. Return JSON
+    // 4. Return JSON with extra metadata for the Tabulator UI
     echo json_encode([
         'status' => 'success',
         'round_status' => $meta['round_status'],
         'judges' => $meta['judges'],
+        'submitted_judges' => $submitted_ids, // Required for Judge Progress badges
         'ranking' => $results
     ]);
     exit();
@@ -70,7 +77,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 // ==========================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
-    // Security: Only Tabulator or Event Manager can lock
     if ($_SESSION['role'] !== 'Tabulator' && $_SESSION['role'] !== 'Event Manager') {
         echo json_encode(['error' => 'Unauthorized']);
         exit();
@@ -86,12 +92,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // 1. Verify Round is Active
     $check = $conn->query("SELECT status FROM rounds WHERE id = $round_id")->fetch_assoc();
-    if ($check['status'] !== 'Active') {
+    if (!$check || $check['status'] !== 'Active') {
         echo json_encode(['error' => 'Round is already locked or completed.']);
         exit();
     }
 
-    // 2. Perform Final Calculation (The "Atomic" Calc)
+    // 2. Perform Final Calculation
     $final_results = ScoreCalculator::calculate($round_id);
 
     // 3. Start Transaction to Save & Lock
