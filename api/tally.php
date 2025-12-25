@@ -34,7 +34,7 @@ function getRoundMetadata($conn, $round_id) {
 }
 
 // ==========================================================
-// HANDLE GET REQUEST: FETCH LIVE SCORES
+// HANDLE GET REQUEST: FETCH LIVE SCORES & AUDIT DATA
 // ==========================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     if (!isset($_GET['round_id'])) {
@@ -51,23 +51,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         exit();
     }
 
-    // 2. [NEW] Fetch Submitted Judge IDs for Progress Tracking
+    // 2. Fetch Submitted Judge IDs for Progress Tracking
     $submitted_q = $conn->query("SELECT judge_id FROM judge_round_status WHERE round_id = $round_id AND status = 'Submitted'");
     $submitted_ids = [];
     while($r = $submitted_q->fetch_assoc()) {
         $submitted_ids[] = (int)$r['judge_id'];
     }
 
-    // 3. Calculate Scores
+    // 3. Calculate Scores (Summary)
     $results = ScoreCalculator::calculate($round_id);
 
-    // 4. Return JSON with extra metadata for the Tabulator UI
+    // 4. [NEW] Fetch Detailed Audit Data for Option B
+    $audit_data = ScoreCalculator::getAuditData($round_id);
+
+    // 5. Return JSON with both Summary and Audit Payloads
     echo json_encode([
         'status' => 'success',
         'round_status' => $meta['round_status'],
         'judges' => $meta['judges'],
-        'submitted_judges' => $submitted_ids, // Required for Judge Progress badges
-        'ranking' => $results
+        'submitted_judges' => $submitted_ids,
+        'ranking' => $results,
+        'audit' => $audit_data // The detailed breakdown tree
     ]);
     exit();
 }

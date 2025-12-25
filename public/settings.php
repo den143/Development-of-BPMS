@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
-requireRole('Event Manager');
+requireRole(['Event Manager', 'Tabulator']);
 
 require_once __DIR__ . '/../app/models/Event.php';
 require_once __DIR__ . '/../app/config/database.php';
@@ -212,6 +212,17 @@ $me = $me_stmt->get_result()->fetch_assoc();
         .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #F59E0B; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .toggle-password { position: absolute; right: 10px; top: 35px; cursor: pointer; color: #9ca3af; }
+
+        /* REPORT CARD STYLES */
+        .report-item { display: flex; align-items: center; gap: 20px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 15px; transition: 0.2s; }
+        .report-item:hover { border-color: #bfa5a5; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
+        .report-icon { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; }
+        .icon-pdf { background: #eff6ff; color: #3b82f6; }
+        .icon-danger { background: #fef2f2; color: #ef4444; }
+        .btn-report { background: #0f172a; color: white; text-decoration: none; padding: 10px 20px; border-radius: 6px; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
+        .btn-report:hover { background: #1e293b; }
+        .btn-danger-outline { background: white; border: 1px solid #fca5a5; color: #dc2626; padding: 10px 20px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .btn-danger-outline:hover { background: #fef2f2; }
     </style>
 </head>
 <body>
@@ -240,6 +251,9 @@ $me = $me_stmt->get_result()->fetch_assoc();
                         </a>
                         <a href="?tab=tickets" class="tab-btn <?= $active_tab == 'tickets' ? 'active' : '' ?>">
                             <i class="fas fa-ticket-alt"></i> Audience Tickets
+                        </a>
+                        <a href="?tab=reports" class="tab-btn <?= $active_tab == 'reports' ? 'active' : '' ?>">
+                            <i class="fas fa-file-invoice"></i> Reports & Exports
                         </a>
                         <a href="?tab=history" class="tab-btn <?= $active_tab == 'history' ? 'active' : '' ?>">
                             <i class="fas fa-history"></i> Switch Event
@@ -368,6 +382,54 @@ $me = $me_stmt->get_result()->fetch_assoc();
                             <?php endif; ?>
                         </div>
 
+                        <div class="card <?= $active_tab == 'reports' ? 'active' : '' ?>">
+                            <div class="card-header">
+                                <div>
+                                    <h3>Event Reports & Exports</h3>
+                                    <p>Generate official documents and manage event data.</p>
+                                </div>
+                            </div>
+
+                            <?php if (!$active_event): ?>
+                                <div style="text-align:center; padding:20px; color:#9ca3af;">
+                                    <i class="fas fa-exclamation-circle"></i> No active event selected.
+                                </div>
+                            <?php else: ?>
+                                <div class="report-item">
+                                    <div class="report-icon icon-pdf">
+                                        <i class="fas fa-file-pdf"></i>
+                                    </div>
+                                    <div style="flex:1;">
+                                        <h4 style="margin:0; font-size:16px; color:#1e293b;">Official Tabulation Report</h4>
+                                        <p style="margin:5px 0 0; font-size:13px; color:#64748b;">
+                                            Download the complete post-event report containing final rankings, audit matrices, award winners, and signature pages for judges.
+                                        </p>
+                                    </div>
+                                    <a href="print_report.php?event_id=<?= $active_event['id'] ?>" target="_blank" class="btn-report">
+                                        <i class="fas fa-print"></i> Generate PDF
+                                    </a>
+                                </div>
+
+                                <div style="margin-top:40px;">
+                                    <h4 style="font-size:14px; color:#dc2626; margin-bottom:10px; border-bottom:1px solid #fee2e2; padding-bottom:5px;">Danger Zone</h4>
+                                    <div class="report-item" style="border-color:#fca5a5; background:#fffafa;">
+                                        <div class="report-icon icon-danger">
+                                            <i class="fas fa-exclamation-triangle"></i>
+                                        </div>
+                                        <div style="flex:1;">
+                                            <h4 style="margin:0; font-size:16px; color:#991b1b;">Reset Event Data</h4>
+                                            <p style="margin:5px 0 0; font-size:13px; color:#b91c1c;">
+                                                Permanently delete all scores, rankings, and ticket usage for this event. This action cannot be undone.
+                                            </p>
+                                        </div>
+                                        <button class="btn-danger-outline" onclick="alert('This feature is disabled for safety reasons.')">
+                                            Reset Data
+                                        </button>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+
                         <div class="card <?= $active_tab == 'history' ? 'active' : '' ?>">
                             <div class="card-header">
                                 <div>
@@ -489,7 +551,7 @@ $me = $me_stmt->get_result()->fetch_assoc();
             }
         }
 
-        // --- NEW: PRINT TICKETS ---
+        // --- PRINT TICKETS ---
         function printTickets() {
             var divToPrint = document.getElementById("printableTable");
             var newWin = window.open("");
@@ -528,7 +590,6 @@ $me = $me_stmt->get_result()->fetch_assoc();
         if (urlParams.has('success')) showToast(urlParams.get('success'), 'success');
         if (urlParams.has('error')) showToast(urlParams.get('error'), 'error');
         if (urlParams.has('success') || urlParams.has('error')) {
-            // Clean URL but keep current tab
             const newUrl = window.location.pathname + "?tab=" + "<?= $active_tab ?>";
             window.history.replaceState({}, document.title, newUrl);
         }
