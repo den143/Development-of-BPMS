@@ -19,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $hometown    = trim($_POST['hometown']);
     $motto       = trim($_POST['motto']);
 
-    // --- CREATE NEW ---
+    // --- CREATE NEW (Manual Add) ---
     if ($action === 'create') {
         $pass = trim($_POST['password']);
         
@@ -38,21 +38,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $conn->begin_transaction();
         try {
             $hashed_pass = password_hash($pass, PASSWORD_DEFAULT);
+            
+            // 1. Insert into Users
             $stmt1 = $conn->prepare("INSERT INTO users (name, email, password, role, status) VALUES (?, ?, ?, 'Contestant', 'Active')");
             $stmt1->bind_param("sss", $name, $email, $hashed_pass);
             $stmt1->execute();
             $user_id = $conn->insert_id;
 
+            // 2. Insert into Details
             $stmt2 = $conn->prepare("INSERT INTO contestant_details (user_id, event_id, age, height, vital_stats, hometown, motto, photo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
             $stmt2->bind_param("iiisssss", $user_id, $event_id, $age, $height, $vital_stats, $hometown, $motto, $photo_name);
             $stmt2->execute();
             
+            // =========================================================
+            //  SEND EMAIL (Added for Manual Add)
+            // =========================================================
+            require_once __DIR__ . '/../app/core/CustomMailer.php';
+            
+            // CHANGE THIS to your live domain
+            $site_link = "http://YOUR-SUBDOMAIN.rf.gd/bpms/public/index.php"; 
+            
+            // Fetch Event Name
+            $evt_name = "the Pageant";
+            $e_query = $conn->query("SELECT name FROM events WHERE id = $event_id");
+            if ($row = $e_query->fetch_assoc()) {
+                $evt_name = $row['name'];
+            }
+
+            $subject = "Official Contestant Registration";
+            $body = "
+                <h2>Welcome, $name!</h2>
+                <p>You have been officially registered as a contestant for <b>$evt_name</b>.</p>
+                
+                <div style='background:#f3f4f6; padding:15px; border-radius:8px; border:1px solid #ddd; margin:20px 0;'>
+                    <strong>Your Login Credentials:</strong><br>
+                    Email: <b>$email</b><br>
+                    Password: <b>$pass</b>
+                </div>
+
+                <p>Please login to your dashboard to view the schedule:</p>
+                <p>
+                    <a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;'>
+                        Login to Dashboard
+                    </a>
+                </p>
+            ";
+            
+            // Send email but don't crash if it fails
+            sendCustomEmail($email, $subject, $body);
+            // =========================================================
+
             $conn->commit();
-            header("Location: ../public/contestants.php?success=Contestant added");
+            header("Location: ../public/contestants.php?success=Contestant added successfully");
 
         } catch (Exception $e) {
             $conn->rollback();
-            header("Location: ../public/contestants.php?error=Database Error");
+            header("Location: ../public/contestants.php?error=Database Error: " . $e->getMessage());
         }
     } 
 
@@ -63,7 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $conn->begin_transaction();
         try {
-            // 1. Update User Table (Name, Email, Pass)
+            // 1. Update User Table
             if (!empty($pass)) {
                 $hashed_pass = password_hash($pass, PASSWORD_DEFAULT);
                 $stmt1 = $conn->prepare("UPDATE users SET name=?, email=?, password=? WHERE id=?");
@@ -74,18 +115,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $stmt1->execute();
 
-            // 2. Handle Photo Update (Optional)
+            // 2. Handle Photo Update
             $photo_name = null;
             if (isset($_FILES['photo']) && $_FILES['photo']['error'] === 0) {
                 $photo_name = uploadPhoto($_FILES['photo']);
                 if ($photo_name) {
-                    // Update details WITH photo
                     $stmt2 = $conn->prepare("UPDATE contestant_details SET event_id=?, age=?, height=?, vital_stats=?, hometown=?, motto=?, photo=? WHERE user_id=?");
                     $stmt2->bind_param("iisssssi", $event_id, $age, $height, $vital_stats, $hometown, $motto, $photo_name, $id);
                 }
             }
             
-            // If no photo uploaded, use query WITHOUT photo column
             if (!$photo_name) {
                 $stmt2 = $conn->prepare("UPDATE contestant_details SET event_id=?, age=?, height=?, vital_stats=?, hometown=?, motto=? WHERE user_id=?");
                 $stmt2->bind_param("iissssi", $event_id, $age, $height, $vital_stats, $hometown, $motto, $id);
@@ -124,7 +163,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     $action = $_GET['action'];
     $my_id = $_SESSION['user_id'];
 
-    // 1. Security Check: Ensure this contestant belongs to an event created by THIS manager
+    // 1. Security Check
     $check_auth = $conn->prepare("
         SELECT u.id 
         FROM users u
@@ -165,18 +204,13 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         
         if ($stmt->execute()) {
 
-            // =========================================================
-            //  SEND EMAIL NOTIFICATION (Using CustomMailer - No Library)
-            // =========================================================
-            
-            // Only send email for Approve or Reject actions
+            // EMAIL LOGIC FOR APPROVAL/REJECTION (Self-Registered)
             if ($action === 'approve' || $action === 'reject') {
                 require_once __DIR__ . '/../app/core/CustomMailer.php';
+                
+                // CHANGE THIS to your live domain
+                $site_link = "http://YOUR-SUBDOMAIN.rf.gd/bpms/public/index.php"; 
 
-                $site_link = "https://my-bpms-project.rf.gd/bpms/public/index.php"; 
-                // -------------------------------------------------------
-
-                // Fetch User Email & Name
                 $u_query = $conn->query("SELECT name, email FROM users WHERE id = $id");
                 $u_data  = $u_query->fetch_assoc();
                 
@@ -186,48 +220,21 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                     
                     if ($action === 'approve') {
                         $subject = "Application Status: ACCEPTED";
-                        $body = "
-                            <h2>Congratulations, $to_name!</h2>
-                            <p>We are pleased to inform you that your application has been <b>ACCEPTED</b>.</p>
-                            <p>You may now log in to the Candidate Portal to view the schedule and event details:</p>
-                            
-                            <p>
-                                <a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px; font-weight:bold;'>
-                                    Login to Dashboard
-                                </a>
-                            </p>
-                            
-                            <p style='font-size:12px; color:#666;'>Link not working? Copy this URL: <br> $site_link</p>
-                            <br>
-                            <p><i>- BPMS Organizing Committee</i></p>
-                        ";
+                        $body = "<h2>Congratulations, $to_name!</h2><p>Your application has been <b>ACCEPTED</b>.</p><p><a href='$site_link'>Login to Dashboard</a></p>";
                         sendCustomEmail($to_email, $subject, $body);
                     } 
                     elseif ($action === 'reject') {
                         $subject = "Application Status Update";
-                        $body = "
-                            <h2>Hello $to_name,</h2>
-                            <p>Thank you for your interest in our event.</p>
-                            <p>After careful review, we regret to inform you that your application was <b>NOT ACCEPTED</b> at this time.</p>
-                            <p>You can check our website for future events and updates: <a href='$site_link'>Visit Website</a></p>
-                            <br>
-                            <p><i>- BPMS Organizing Committee</i></p>
-                        ";
+                        $body = "<h2>Hello $to_name,</h2><p>Unfortunately, your application was <b>NOT ACCEPTED</b>.</p>";
                         sendCustomEmail($to_email, $subject, $body);
                     }
                 }
             }
-            // =========================================================
 
             // REDIRECT LOGIC
-            $tab = 'active'; // Default to official list
-
-            if ($action === 'remove') {
-                $tab = 'active'; // Stay on active list (so you see them vanish)
-            } elseif ($action === 'approve' || $action === 'reject') {
-                $tab = 'pending'; // Stay on pending
-            } elseif ($action === 'restore') {
-                $tab = 'active'; // Go to ACTIVE list so you see them back
+            $tab = 'active';
+            if ($action === 'approve' || $action === 'reject') {
+                $tab = 'pending';
             }
             
             header("Location: ../public/contestants.php?view=$tab&success=" . urlencode($msg));

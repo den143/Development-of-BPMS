@@ -193,6 +193,11 @@ if ($active_event) {
                                             <?php if ($view === 'active'): ?>
                                                 <button class="btn-sm btn-edit" onclick='openEditModal(<?= json_encode($org) ?>)'>Edit</button>
                                                 <a href="../api/organizer.php?action=remove&id=<?= $org['link_id'] ?>" class="btn-sm btn-remove" onclick="return confirm('Remove from this event?');">Remove</a>
+                                                <form action="..api/resend_email.php" method="POST" style="display:inline-block;" onsubmit="return confirm('Resend invite and reset password?');">
+                                                    <input type="hidden" name="user_id" value="<?= $org['user_id'] ?>">
+                                                    <button type="submit" title="Resend Invite" style="background:none; border:none; cursor:pointer; color:#0d6efd; margin-left:5px;">
+                                                        <i class="fas fa-paper-plane"></i>
+                                                    </button>
                                             <?php else: ?>
                                                 <a href="../api/organizer.php?action=restore&id=<?= $org['link_id'] ?>" class="btn-sm btn-restore" onclick="return confirm('Restore?');">Restore</a>
                                             <?php endif; ?>

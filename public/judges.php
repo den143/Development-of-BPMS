@@ -5,7 +5,7 @@ requireRole('Event Manager');
 require_once __DIR__ . '/../app/config/database.php';
 
 $manager_id = $_SESSION['user_id'];
-$view = $_GET['view'] ?? 'active'; // Default view
+$view = $_GET['view'] ?? 'active'; 
 $status_filter = ($view === 'archived') ? 'Inactive' : 'Active';
 
 // 1. Get Active Event
@@ -19,7 +19,7 @@ $judges = [];
 if ($active_event) {
     $event_id = $active_event['id'];
     
-    // 2. Fetch Judges based on Status
+    // 2. Fetch Judges
     $sql = "SELECT ej.id as link_id, ej.is_chairman, ej.judge_id, 
                    u.name, u.email 
             FROM event_judges ej 
@@ -56,10 +56,20 @@ if ($active_event) {
         .badge-chairman { background: #dbeafe; color: #1e40af; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
         
         /* Action Buttons */
-        .btn-sm { padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; text-decoration: none; border: none; margin-right: 5px; }
+        .action-group { display: flex; gap: 5px; align-items: center; }
+        .btn-sm { padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; text-decoration: none; border: none; display: inline-flex; align-items: center; gap: 5px; }
+        
         .btn-edit { background: #e0f2fe; color: #0284c7; }
+        .btn-edit:hover { background: #bae6fd; }
+        
         .btn-remove { background: #fee2e2; color: #dc2626; }
+        .btn-remove:hover { background: #fecaca; }
+        
         .btn-restore { background: #d1fae5; color: #059669; }
+        
+        /* Resend Button Style */
+        .btn-resend { background: #e0e7ff; color: #4f46e5; }
+        .btn-resend:hover { background: #c7d2fe; }
 
         /* Modal */
         .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 1000; }
@@ -120,7 +130,7 @@ if ($active_event) {
                             </thead>
                             <tbody>
                                 <?php if (empty($judges)): ?>
-                                    <tr><td colspan="4" style="text-align:center; padding:30px; color:#9ca3af;">No judges found in this list.</td></tr>
+                                    <tr><td colspan="4" style="text-align:center; padding:30px; color:#9ca3af;">No judges found.</td></tr>
                                 <?php else: ?>
                                     <?php foreach ($judges as $j): ?>
                                         <tr>
@@ -130,12 +140,23 @@ if ($active_event) {
                                                 <?= $j['is_chairman'] ? '<span class="badge-chairman">Chairman</span>' : '<span style="color:#6b7280; font-size:12px;">Judge</span>' ?>
                                             </td>
                                             <td>
+                                                <div class="action-group">
                                                 <?php if ($view === 'active'): ?>
+                                                    
                                                     <button class="btn-sm btn-edit" onclick='openEditModal(<?= json_encode($j) ?>)'>Edit</button>
                                                     <a href="../api/judge.php?action=remove&id=<?= $j['link_id'] ?>" class="btn-sm btn-remove" onclick="return confirm('Remove this judge?');">Remove</a>
+                                                    
+                                                    <form action="../api/resend_email.php" method="POST" style="margin:0;" onsubmit="return confirm('Resend invite and reset password?');">
+                                                        <input type="hidden" name="user_id" value="<?= $j['judge_id'] ?>">
+                                                        <input type="hidden" name="role_type" value="Judge"> <button type="submit" class="btn-sm btn-resend" title="Resend Invite">
+                                                            <i class="fas fa-paper-plane"></i> Resend
+                                                        </button>
+                                                    </form>
+
                                                 <?php else: ?>
                                                     <a href="../api/judge.php?action=restore&id=<?= $j['link_id'] ?>" class="btn-sm btn-restore" onclick="return confirm('Restore this judge?');">Restore</a>
                                                 <?php endif; ?>
+                                                </div>
                                             </td>
                                         </tr>
                                     <?php endforeach; ?>
@@ -155,25 +176,10 @@ if ($active_event) {
             <form action="../api/judge.php" method="POST">
                 <input type="hidden" name="action" value="add">
                 <input type="hidden" name="event_id" value="<?= $active_event['id'] ?? '' ?>">
-
-                <div class="form-group">
-                    <label>Full Name</label>
-                    <input type="text" name="name" class="form-control" required>
-                </div>
-                <div class="form-group">
-                    <label>Email (Login)</label>
-                    <input type="email" name="email" class="form-control" required>
-                </div>
-                <div class="form-group">
-                    <label>Password</label>
-                    <input type="password" name="password" id="addPass" class="form-control" required>
-                    <i class="fas fa-eye toggle-password" onclick="togglePassword('addPass', this)"></i>
-                </div>
-                <div class="form-group">
-                    <input type="checkbox" name="is_chairman" id="chkAdd" value="1">
-                    <label for="chkAdd">Set as Chairman?</label>
-                </div>
-
+                <div class="form-group"><label>Full Name</label><input type="text" name="name" class="form-control" required></div>
+                <div class="form-group"><label>Email (Login)</label><input type="email" name="email" class="form-control" required></div>
+                <div class="form-group"><label>Password</label><input type="password" name="password" id="addPass" class="form-control" required><i class="fas fa-eye toggle-password" onclick="togglePassword('addPass', this)"></i></div>
+                <div class="form-group"><input type="checkbox" name="is_chairman" id="chkAdd" value="1"><label for="chkAdd">Set as Chairman?</label></div>
                 <div style="text-align:right; margin-top:20px;">
                     <button type="button" onclick="closeModal('addModal')" style="background:#e5e7eb; border:none; padding:8px 15px; border-radius:4px; cursor:pointer;">Cancel</button>
                     <button type="submit" style="background:#F59E0B; color:white; border:none; padding:8px 15px; border-radius:4px; font-weight:bold; cursor:pointer;">Save</button>
@@ -189,25 +195,10 @@ if ($active_event) {
                 <input type="hidden" name="action" value="update">
                 <input type="hidden" name="link_id" id="edit_link_id">
                 <input type="hidden" name="judge_id" id="edit_judge_id">
-
-                <div class="form-group">
-                    <label>Full Name</label>
-                    <input type="text" name="name" id="edit_name" class="form-control" required>
-                </div>
-                <div class="form-group">
-                    <label>Email</label>
-                    <input type="email" name="email" id="edit_email" class="form-control" required>
-                </div>
-                <div class="form-group">
-                    <label>Change Password (Optional)</label>
-                    <input type="password" name="password" id="editPass" class="form-control" placeholder="Leave empty to keep current">
-                    <i class="fas fa-eye toggle-password" onclick="togglePassword('editPass', this)"></i>
-                </div>
-                <div class="form-group">
-                    <input type="checkbox" name="is_chairman" id="edit_chairman" value="1">
-                    <label for="edit_chairman">Set as Chairman?</label>
-                </div>
-
+                <div class="form-group"><label>Full Name</label><input type="text" name="name" id="edit_name" class="form-control" required></div>
+                <div class="form-group"><label>Email</label><input type="email" name="email" id="edit_email" class="form-control" required></div>
+                <div class="form-group"><label>Change Password</label><input type="password" name="password" id="editPass" class="form-control" placeholder="Leave empty to keep"><i class="fas fa-eye toggle-password" onclick="togglePassword('editPass', this)"></i></div>
+                <div class="form-group"><input type="checkbox" name="is_chairman" id="edit_chairman" value="1"><label for="edit_chairman">Set as Chairman?</label></div>
                 <div style="text-align:right; margin-top:20px;">
                     <button type="button" onclick="closeModal('editModal')" style="background:#e5e7eb; border:none; padding:8px 15px; border-radius:4px; cursor:pointer;">Cancel</button>
                     <button type="submit" style="background:#F59E0B; color:white; border:none; padding:8px 15px; border-radius:4px; font-weight:bold; cursor:pointer;">Update</button>
@@ -219,7 +210,6 @@ if ($active_event) {
     <script>
         function openModal(id) { document.getElementById(id).style.display = 'flex'; }
         function closeModal(id) { document.getElementById(id).style.display = 'none'; }
-
         function openEditModal(judge) {
             document.getElementById('edit_link_id').value = judge.link_id;
             document.getElementById('edit_judge_id').value = judge.judge_id;
@@ -228,21 +218,13 @@ if ($active_event) {
             document.getElementById('edit_chairman').checked = (judge.is_chairman == 1);
             openModal('editModal');
         }
-
         function togglePassword(inputId, icon) {
             const input = document.getElementById(inputId);
-            if (input.type === "password") {
-                input.type = "text";
-                icon.classList.remove("fa-eye");
-                icon.classList.add("fa-eye-slash");
-            } else {
-                input.type = "password";
-                icon.classList.remove("fa-eye-slash");
-                icon.classList.add("fa-eye");
-            }
+            if (input.type === "password") { input.type = "text"; icon.classList.replace("fa-eye", "fa-eye-slash"); } 
+            else { input.type = "password"; icon.classList.replace("fa-eye-slash", "fa-eye"); }
         }
-
-        // 2. TOAST LOGIC (Matches Organizers/Contestants modules)
+        
+        // Toast logic to capture success/error params from resend_email.php
         function showToast(message, type = 'success') {
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
@@ -250,16 +232,11 @@ if ($active_event) {
             const icon = type === 'success' ? '<i class="fas fa-check-circle"></i>' : '<i class="fas fa-exclamation-circle"></i>';
             toast.innerHTML = `${icon} <span>${message}</span>`;
             container.appendChild(toast);
-            
-            // Remove after 3.5 seconds
             setTimeout(() => { toast.remove(); }, 3500);
         }
-
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('success')) showToast(urlParams.get('success'), 'success');
         if (urlParams.has('error')) showToast(urlParams.get('error'), 'error');
-        
-        // Clean URL so the toast doesn't reappear on refresh
         if (urlParams.has('success') || urlParams.has('error')) {
             const newUrl = window.location.pathname + (urlParams.has('view') ? '?view=' + urlParams.get('view') : '');
             window.history.replaceState({}, document.title, newUrl);

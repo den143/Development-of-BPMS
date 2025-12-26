@@ -249,6 +249,14 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                                     <?php else: ?>
                                         <button class="btn-sm btn-edit" onclick='openEditModal(<?= json_encode($c) ?>)'>Edit</button>
                                         <a href="../api/contestant.php?action=remove&id=<?= $c['id'] ?>" class="btn-sm btn-remove" onclick="return confirm('Remove this contestant?');">Remove</a>
+
+                                        <form action="../api/resend_email.php" method="POST" style="display:inline;" onsubmit="return confirm('This will RESET the password and email it to the contestant. Proceed?');">
+                                            <input type="hidden" name="user_id" value="<?= $c['id'] ?>">
+                                            <input type="hidden" name="role_type" value="Contestant">
+                                            <button type="submit" class="btn-sm" style="background-color: #3b82f6; color: white; border: none; cursor: pointer;" title="Resend Invite & Reset Password">
+                                            <i class="fas fa-envelope"></i>
+                                            </button>
+                                        </form>
                                     <?php endif; ?>
                                 </div>
                             </div>
