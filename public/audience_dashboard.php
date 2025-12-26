@@ -36,10 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vote_id'])) {
     }
 }
 
-// 4. Fetch Contestants [UPDATED QUERY]
-// We now JOIN 'events' and 'users' to filter by status.
-// u.status = 'Active' ensures only Official Candidates show (removes Pending/Archived).
-// e.status = 'Active' ensures we only show contestants from the current ongoing event.
+
 $sql = "SELECT cd.*, u.name 
         FROM contestant_details cd 
         JOIN users u ON cd.user_id = u.id 

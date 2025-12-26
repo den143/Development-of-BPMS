@@ -28,21 +28,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $checkAdmin->execute();
         $adminRes = $checkAdmin->get_result();
 
+        $is_new_account = false; // Flag to track if we should send password
+
         if ($adminRes->num_rows > 0) {
+            // --- EXISTING USER CASE ---
             $existingUser = $adminRes->fetch_assoc();
             if ($existingUser['role'] === 'Event Manager') {
                 throw new Exception("Security Alert: You cannot assign the Event Manager account as an Organizer.");
             }
             // Use existing user
             $user_id = $existingUser['id'];
-            
-            // Update role if needed (Optional, depends if you want to overwrite roles)
-            // $updateRole = $conn->prepare("UPDATE users SET role = ? WHERE id = ?");
-            // $updateRole->bind_param("si", $role, $user_id);
-            // $updateRole->execute();
+            $is_new_account = false;
             
         } else {
-            // Create New User
+            // --- NEW USER CASE ---
             if (empty($pass)) { throw new Exception("Password required for new accounts"); }
             $hashed_pass = password_hash($pass, PASSWORD_DEFAULT);
             $stmt = $conn->prepare("INSERT INTO users (created_by, name, email, phone, role, password, status) VALUES (?, ?, ?, ?, ?, ?, 'Active')");
@@ -50,6 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $stmt->bind_param("isssss", $creator, $name, $email, $phone, $role, $hashed_pass);
             $stmt->execute();
             $user_id = $conn->insert_id;
+            $is_new_account = true;
         }
 
         // Check/Create Link
@@ -70,6 +70,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $insert->execute();
             $msg = "Organizer added successfully";
         }
+
+        // =============================================================
+        //  SEND EMAIL NOTIFICATION (Using CustomMailer)
+        // =============================================================
+        require_once __DIR__ . '/../app/core/CustomMailer.php';
+
+        // 1. Website Link
+        $site_link = "https://my-bpms-project.rf.gd/bpms/public/index.php";
+
+        // 2. Get Event Name
+        $evt_name = "the Event";
+        $e_query = $conn->query("SELECT name FROM events WHERE id = $event_id");
+        if ($row = $e_query->fetch_assoc()) {
+            $evt_name = $row['name'];
+        }
+
+        // 3. Build Email Content
+        $subject = "Team Assignment: $role for $evt_name";
+        
+        if ($is_new_account) {
+            // Message for NEW Accounts (Include Password)
+            $body = "
+                <h2>Welcome, $name!</h2>
+                <p>You have been assigned as a <b>$role</b> for <b>$evt_name</b>.</p>
+                
+                <div style='background:#f3f4f6; padding:15px; border-radius:8px; border:1px solid #ddd; margin:20px 0;'>
+                    <strong>Your Login Credentials:</strong><br>
+                    Email: <b>$email</b><br>
+                    Password: <b>$pass</b>
+                </div>
+
+                <p>Please login to your dashboard to start managing your tasks:</p>
+                <p><a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;'>Login to Dashboard</a></p>
+            ";
+        } else {
+            // Message for EXISTING Accounts (No Password shown)
+            $body = "
+                <h2>Welcome back, $name!</h2>
+                <p>You have been assigned a new role as <b>$role</b> for the event: <b>$evt_name</b>.</p>
+                <p>Since you already have an account, please login using your existing credentials.</p>
+                <p><a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;'>Login to Dashboard</a></p>
+            ";
+        }
+
+        // 4. Send
+        sendCustomEmail($email, $subject, $body);
+        // =============================================================
 
         $conn->commit();
         header("Location: ../public/organizers.php?success=" . urlencode($msg));
@@ -107,7 +154,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
 
         // [CHECK 2] Duplicate Email Check
-        // "Is this email taken by anyone who is NOT me?"
         $dupCheck = $conn->prepare("SELECT id FROM users WHERE email = ? AND id != ?");
         $dupCheck->bind_param("si", $email, $user_id);
         $dupCheck->execute();
@@ -129,7 +175,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         header("Location: ../public/organizers.php?success=Organizer updated");
 
     } catch (mysqli_sql_exception $e) {
-        // Catch duplicate entry if the manual check missed race condition
         if ($e->getCode() == 1062) {
              header("Location: ../public/organizers.php?error=Email is already taken.");
         } else {
@@ -158,3 +203,4 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     }
     exit();
 }
+?>

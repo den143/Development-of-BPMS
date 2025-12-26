@@ -164,6 +164,61 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         $stmt->bind_param("si", $new_status, $id);
         
         if ($stmt->execute()) {
+
+            // =========================================================
+            //  SEND EMAIL NOTIFICATION (Using CustomMailer - No Library)
+            // =========================================================
+            
+            // Only send email for Approve or Reject actions
+            if ($action === 'approve' || $action === 'reject') {
+                require_once __DIR__ . '/../app/core/CustomMailer.php';
+
+                $site_link = "https://my-bpms-project.rf.gd/bpms/public/index.php"; 
+                // -------------------------------------------------------
+
+                // Fetch User Email & Name
+                $u_query = $conn->query("SELECT name, email FROM users WHERE id = $id");
+                $u_data  = $u_query->fetch_assoc();
+                
+                if ($u_data) {
+                    $to_email = $u_data['email'];
+                    $to_name  = $u_data['name'];
+                    
+                    if ($action === 'approve') {
+                        $subject = "Application Status: ACCEPTED";
+                        $body = "
+                            <h2>Congratulations, $to_name!</h2>
+                            <p>We are pleased to inform you that your application has been <b>ACCEPTED</b>.</p>
+                            <p>You may now log in to the Candidate Portal to view the schedule and event details:</p>
+                            
+                            <p>
+                                <a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px; font-weight:bold;'>
+                                    Login to Dashboard
+                                </a>
+                            </p>
+                            
+                            <p style='font-size:12px; color:#666;'>Link not working? Copy this URL: <br> $site_link</p>
+                            <br>
+                            <p><i>- BPMS Organizing Committee</i></p>
+                        ";
+                        sendCustomEmail($to_email, $subject, $body);
+                    } 
+                    elseif ($action === 'reject') {
+                        $subject = "Application Status Update";
+                        $body = "
+                            <h2>Hello $to_name,</h2>
+                            <p>Thank you for your interest in our event.</p>
+                            <p>After careful review, we regret to inform you that your application was <b>NOT ACCEPTED</b> at this time.</p>
+                            <p>You can check our website for future events and updates: <a href='$site_link'>Visit Website</a></p>
+                            <br>
+                            <p><i>- BPMS Organizing Committee</i></p>
+                        ";
+                        sendCustomEmail($to_email, $subject, $body);
+                    }
+                }
+            }
+            // =========================================================
+
             // REDIRECT LOGIC
             $tab = 'active'; // Default to official list
 
@@ -182,3 +237,4 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     }
     exit();
 }
+?>

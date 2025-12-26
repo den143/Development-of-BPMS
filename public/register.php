@@ -18,14 +18,16 @@ $success = $_GET['success'] ?? null;
 <head>
     <meta charset="UTF-8">
     <title>Candidate Registration - BPMS</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         /* Reuse core styles */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; height: 100vh; display: flex; overflow: hidden; }
 
+        /* --- DESKTOP LAYOUT (50-50 Split) --- */
         .brand-section {
-            width: 40%;
+            width: 50%; /* 50-50 Split on Laptop */
             background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
             color: white;
             display: flex;
@@ -34,23 +36,27 @@ $success = $_GET['success'] ?? null;
             align-items: center;
             padding: 40px;
             text-align: center;
+            transition: all 0.3s ease;
         }
         .brand-logo { width: 120px; margin-bottom: 20px; }
+        .brand-text-container { display: flex; flex-direction: column; align-items: center; }
         .brand-title { font-size: 32px; font-weight: bold; color: #F59E0B; }
-        .brand-desc { font-size: 14px; color: #9ca3af; margin-top: 10px; max-width: 300px; }
+        .brand-subtitle { font-size: 18px; font-weight: 500; color: #e5e7eb; margin-bottom: 10px; }
+        .brand-desc { font-size: 14px; color: #9ca3af; max-width: 350px; line-height: 1.5; }
 
         .form-section {
-            width: 60%;
+            width: 50%; /* 50-50 Split on Laptop */
             background-color: #f9fafb;
             overflow-y: auto;
             padding: 40px;
             display: flex;
             justify-content: center;
+            align-items: flex-start; /* Aligns card to top when scrolling */
         }
 
         .register-card {
             width: 100%;
-            max-width: 600px;
+            max-width: 650px;
             background: white;
             padding: 40px;
             border-radius: 12px;
@@ -59,20 +65,40 @@ $success = $_GET['success'] ?? null;
             margin-bottom: 40px;
         }
 
-        .form-header { margin-bottom: 30px; text-align: center; }
-        .form-header h2 { color: #1f2937; }
+        /* --- FORM STYLES --- */
+        .form-header { margin-bottom: 25px; text-align: center; }
+        .form-header h2 { color: #1f2937; font-size: 26px; }
         .form-header p { color: #6b7280; font-size: 14px; }
 
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         .full-width { grid-column: span 2; }
 
-        .form-group { position: relative; } /* Needed for toggle icon */
+        .form-group { position: relative; } 
         .form-group label { display: block; margin-bottom: 5px; color: #374151; font-weight: 600; font-size: 13px; }
         .form-control { width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; outline: none; }
         .form-control:focus { border-color: #F59E0B; }
         
-        .file-input-wrapper { border: 2px dashed #d1d5db; padding: 20px; text-align: center; border-radius: 6px; cursor: pointer; color: #6b7280; }
-        .file-input-wrapper:hover { border-color: #F59E0B; color: #F59E0B; }
+        /* Remove arrows from number input */
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            margin: 0; 
+        }
+
+        /* UPLOAD BUTTON STYLE */
+        .btn-upload {
+            background-color: #9ca3af; /* Grey */
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.3s;
+        }
+        .btn-upload:hover { background-color: #6b7280; }
+        .file-name-display { font-size: 13px; color: #6b7280; font-style: italic; margin-left: 10px; }
 
         .btn-submit { width: 100%; padding: 12px; background-color: #F59E0B; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; margin-top: 20px; font-size: 16px; }
         .btn-submit:hover { background-color: #d97706; }
@@ -84,24 +110,53 @@ $success = $_GET['success'] ?? null;
         .back-link { display: block; text-align: center; margin-top: 20px; color: #6b7280; text-decoration: none; font-size: 14px; }
         .back-link:hover { color: #1f2937; }
 
-        /* PASSWORD TOGGLE ICON */
         .toggle-password {
             position: absolute;
             right: 10px;
-            top: 32px; /* Adjust based on label height */
+            top: 32px; 
             cursor: pointer;
             color: #9ca3af;
         }
         .toggle-password:hover { color: #374151; }
 
+        /* --- MOBILE RESPONSIVENESS (The Fix) --- */
         @media (max-width: 900px) {
-            body { flex-direction: column; overflow-y: auto; }
-            .brand-section { width: 100%; padding: 20px; min-height: 150px; flex-direction: row; justify-content: space-between; text-align: left;}
-            .brand-logo { width: 50px; margin: 0; }
-            .brand-title { font-size: 24px; }
-            .brand-desc { display: none; }
+            body { 
+                flex-direction: column; /* Stack top to bottom */
+                overflow-y: auto;       /* Allow full page scroll */
+            }
+
+            /* BRAND SECTION BECOMES HEADER */
+            .brand-section { 
+                width: 100%; 
+                min-height: 90px;      /* Fixed small header height */
+                padding: 15px 20px; 
+                flex-direction: row;    /* Row: Logo Left | Text Right */
+                justify-content: flex-start; /* Align left */
+                align-items: center;
+                text-align: left;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+                z-index: 10;
+            }
+
+            .brand-logo { 
+                width: 50px; 
+                margin-bottom: 0;       /* No bottom margin */
+                margin-right: 15px;     /* Space between logo and text */
+            }
+
+            .brand-text-container {
+                align-items: flex-start; /* Align text to left */
+            }
+
+            .brand-title { font-size: 20px; line-height: 1.2; }
+            .brand-subtitle { font-size: 12px; margin-bottom: 0; opacity: 0.9; }
+            .brand-desc { display: none; } /* Hide long description on mobile */
+
+            /* FORM SECTION FILLS REST */
             .form-section { width: 100%; padding: 20px; }
-            .form-grid { grid-template-columns: 1fr; }
+            .register-card { margin-top: 0; padding: 25px; }
+            .form-grid { grid-template-columns: 1fr; } /* Stack inputs */
             .full-width { grid-column: span 1; }
         }
     </style>
@@ -109,9 +164,10 @@ $success = $_GET['success'] ?? null;
 <body>
 
     <div class="brand-section">
-        <div>
-            <img src="./assets/images/BPMS_logo.png" alt="Logo" class="brand-logo">
+        <img src="./assets/images/BPMS_logo.png" alt="Logo" class="brand-logo">
+        <div class="brand-text-container">
             <div class="brand-title">BPMS</div>
+            <div class="brand-subtitle">Beauty Pageant Management System</div>
             <p class="brand-desc">Join the most prestigious pageant. Register your application today.</p>
         </div>
     </div>
@@ -169,8 +225,8 @@ $success = $_GET['success'] ?? null;
                     </div>
 
                     <div class="form-group">
-                        <label>Height (cm or ft)</label>
-                        <input type="text" name="height" class="form-control" placeholder="e.g. 170cm" required>
+                        <label>Height (cm)</label>
+                        <input type="number" name="height" class="form-control" placeholder="170" required>
                     </div>
 
                     <div class="form-group">
@@ -190,11 +246,13 @@ $success = $_GET['success'] ?? null;
 
                     <div class="form-group full-width">
                         <label>Upload Photo (Headshot/Half Body)</label>
-                        <div class="file-input-wrapper" onclick="document.getElementById('photoInput').click()">
-                            <i class="fas fa-cloud-upload-alt" style="font-size:24px; margin-bottom:5px;"></i><br>
-                            <span>Click to Upload Image (JPG/PNG)</span>
-                            <input type="file" name="photo" id="photoInput" style="display:none;" accept="image/*" onchange="document.querySelector('.file-input-wrapper span').innerText = this.files[0].name" required>
+                        <div style="display: flex; align-items: center;">
+                            <button type="button" class="btn-upload" onclick="document.getElementById('photoInput').click()">
+                                <i class="fas fa-upload"></i> Choose Photo
+                            </button>
+                            <span id="fileNameDisplay" class="file-name-display">No file chosen</span>
                         </div>
+                        <input type="file" name="photo" id="photoInput" style="display:none;" accept="image/*" onchange="updateFileName(this)" required>
                     </div>
 
                 </div>
@@ -218,6 +276,17 @@ $success = $_GET['success'] ?? null;
                 input.type = "password";
                 icon.classList.remove("fa-eye-slash");
                 icon.classList.add("fa-eye");
+            }
+        }
+
+        function updateFileName(input) {
+            const display = document.getElementById('fileNameDisplay');
+            if (input.files && input.files.length > 0) {
+                display.innerText = input.files[0].name;
+                display.style.color = "#374151"; 
+            } else {
+                display.innerText = "No file chosen";
+                display.style.color = "#6b7280";
             }
         }
     </script>

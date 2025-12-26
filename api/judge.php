@@ -70,6 +70,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $msg = "Judge added successfully";
         }
 
+        // =============================================================
+        //  SEND EMAIL INVITE (Using CustomMailer)
+        // =============================================================
+        require_once __DIR__ . '/../app/core/CustomMailer.php';
+
+        // 1. Website Link
+        $site_link = "https://my-bpms-project.rf.gd/bpms/public/index.php";
+
+        // 2. Get Event Name for the email
+        $evt_name = "the Pageant";
+        $e_query = $conn->query("SELECT name FROM events WHERE id = $event_id");
+        if ($row = $e_query->fetch_assoc()) {
+            $evt_name = $row['name'];
+        }
+
+        // 3. Prepare Email
+        $subject = "Official Invitation: Judge for $evt_name";
+        $body = "
+            <h2>Hello, $name!</h2>
+            <p>You have been selected to serve as an <b>Official Judge</b> for <b>$evt_name</b>.</p>
+            <p>We are honored to have you on our panel.</p>
+            
+            <div style='background:#f3f4f6; padding:15px; border-radius:8px; border:1px solid #ddd; margin:20px 0;'>
+                <strong>Your Login Credentials:</strong><br>
+                Email: <b>$email</b><br>
+                Password: <b>$pass</b>
+            </div>
+
+            <p>Please login to the Judge's Dashboard to view the scoring criteria and candidates:</p>
+            <p>
+                <a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px; font-weight:bold;'>
+                    Open Judge Dashboard
+                </a>
+            </p>
+            <p style='font-size:12px; color:#666;'>Link: $site_link</p>
+            <br>
+            <p><i>- BPMS Organizing Committee</i></p>
+        ";
+
+        // 4. Send
+        sendCustomEmail($email, $subject, $body);
+        // =============================================================
+
         $conn->commit();
         header("Location: ../public/judges.php?success=" . urlencode($msg));
 
@@ -148,3 +191,4 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     }
     exit();
 }
+?>
