@@ -123,7 +123,7 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
         /* ======================== */
         @media print {
             @page { size: landscape; margin: 0.5cm; }
-            body { font-family: 'Times New Roman', serif; background: white; -webkit-print-color-adjust: exact; }
+            body { font-family: 'Times New Roman', serif; background: white; color: black; }
 
             /* 1. HIDE ALL UI CHROME */
             .sidebar, .navbar, .tab-nav, .stats-grid, .control-toolbar, .action-btn { display: none !important; }
