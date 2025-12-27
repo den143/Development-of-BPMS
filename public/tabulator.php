@@ -14,8 +14,6 @@ $user_id = $_SESSION['user_id'];
 $user_role = $_SESSION['role'];
 
 // 2. GET ACTIVE EVENT
-// We fetch the single active event for the system (or linked to the manager)
-// For Tabulator, we assume they are assigned to the active event.
 $evt_sql = "SELECT id, name FROM events WHERE status = 'Active' LIMIT 1";
 $event = $conn->query($evt_sql)->fetch_assoc();
 
@@ -442,14 +440,12 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
 
         tbody.innerHTML = ranking.map(row => {
             const c = row.contestant;
-            const numDisplay = c.contestant_number ? `#${c.contestant_number}` : '';
-
+            // REMOVED numDisplay logic here
             return `<tr class="${row.rank <= 3 ? 'rank-'+row.rank : ''}">
                 <td><div class="rank-box">${row.rank}</div></td>
                 <td class="contestant-cell">
                     <img src="assets/uploads/contestants/${c.photo}" class="c-img" onerror="this.src='assets/images/default_user.png'">
-                    <span>${c.name} <small style="color:#6b7280; font-size:0.85em; margin-left:4px;">${numDisplay}</small></span>
-                </td>
+                    <span>${c.name}</span> </td>
                 ${judges.map(j => `<td>${row.judge_scores[j.id] !== undefined ? parseFloat(row.judge_scores[j.id]).toFixed(2) : '<span style="color:#ddd">--</span>'}</td>`).join('')}
                 <td class="final-score">${parseFloat(row.final_score).toFixed(2)}</td>
             </tr>`;
@@ -490,8 +486,8 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
 
         ranking.forEach(row => {
             const c = row.contestant;
-            const numDisplay = c.contestant_number ? `<br><small>#${c.contestant_number}</small>` : '';
-            htmlScreen += `<tr><td class="contestant-cell"><b>${c.name}</b>${numDisplay}</td>`;
+            // REMOVED numDisplay logic here
+            htmlScreen += `<tr><td class="contestant-cell"><b>${c.name}</b></td>`;
             audit.segments.forEach(seg => {
                 const segCriteria = audit.criteria.filter(cr => cr.segment_id == seg.id);
                 const weight = parseFloat(seg.weight_percentage) / 100;
@@ -542,8 +538,8 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
 
             ranking.forEach(row => {
                 const c = row.contestant;
-                const numDisplay = c.contestant_number ? ` (#${c.contestant_number})` : '';
-                printHTML += `<tr><td><b>${c.name}</b>${numDisplay}</td>`;
+                // REMOVED numDisplay logic here
+                printHTML += `<tr><td><b>${c.name}</b></td>`;
 
                 judges.forEach(j => {
                     let segRawSum = 0;

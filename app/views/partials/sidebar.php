@@ -28,7 +28,8 @@
         <li><a href="criteria.php" class="<?= isActive('criteria.php') ?>"><i class="fas fa-clipboard-list"></i> <span>Segments & Criteria</span></a></li>
         <li><a href="activities.php" class="<?= isActive('activities.php') ?>"><i class="fas fa-calendar-check"></i> <span>Manage Activities</span></a></li>
         <li><a href="awards.php" class="<?= isActive('awards.php') ?>"><i class="fas fa-trophy"></i> <span>Manage Awards</span></a></li>
-        <li><a href="tabulator.php" class="<?= isActive('results.php') ?>"><i class="fas fa-poll"></i> <span>Result Panel</span></a></li>
+        
+        <li><a href="tabulator.php" class="<?= isActive('tabulator.php') ?>"><i class="fas fa-poll"></i> <span>Result Panel</span></a></li>
     </ul>
     
     <div class="sidebar-footer">

@@ -55,7 +55,7 @@ if ($event_id) {
     $j_stmt->execute();
     $count_judges = $j_stmt->get_result()->fetch_assoc()['total'];
     
-    // C. Count Rounds (NOW IMPLEMENTED)
+    // C. Count Rounds
     $r_stmt = $conn->prepare("SELECT COUNT(*) as total FROM rounds WHERE event_id = ?");
     $r_stmt->bind_param("i", $event_id);
     $r_stmt->execute();
@@ -110,6 +110,21 @@ unset($_SESSION['success'], $_SESSION['error'], $_SESSION['show_modal']);
         .btn-action { display: inline-block; margin-left: auto; padding: 6px 12px; background-color: #f3f4f6; color: #374151; text-decoration: none; border-radius: 6px; font-size: 12px; transition: background 0.2s; }
         .btn-action:hover { background-color: #e5e7eb; }
         
+        /* --- NEW QUICK ACTIONS STYLES --- */
+        .quick-actions-list { display: flex; flex-direction: column; gap: 10px; }
+        .btn-quick {
+            display: flex; align-items: center; justify-content: flex-start;
+            padding: 12px 15px; border-radius: 8px; text-decoration: none; 
+            font-weight: 600; font-size: 14px; transition: all 0.2s;
+        }
+        .btn-quick i { margin-right: 10px; width: 20px; text-align: center; }
+        
+        .btn-quick.primary { background-color: #F59E0B; color: white; }
+        .btn-quick.primary:hover { background-color: #d97706; transform: translateX(5px); }
+        
+        .btn-quick.secondary { background-color: #f3f4f6; color: #374151; }
+        .btn-quick.secondary:hover { background-color: #e5e7eb; color: #111827; transform: translateX(5px); }
+
         @media (max-width: 900px) {
             .dashboard-grid { grid-template-columns: 1fr; }
         }
@@ -225,8 +240,27 @@ unset($_SESSION['success'], $_SESSION['error'], $_SESSION['show_modal']);
 
                     <div class="card-section">
                         <div class="card-title">Quick Actions</div>
-                        <p style="color: #6b7280; font-size: 14px;">Shortcuts will appear here once setup is complete.</p>
-                        <button style="margin-top: 20px; padding: 10px; width: 100%; background: #e5e7eb; border: none; border-radius: 6px; color: #9ca3af; cursor: not-allowed;" disabled>Open Score Sheet</button>
+                        <?php if($event_id): ?>
+                            <div class="quick-actions-list">
+                                <a href="tabulator.php" class="btn-quick primary">
+                                    <i class="fas fa-chart-line"></i> Live Tabulation
+                                </a>
+                                <a href="print_report.php" class="btn-quick secondary">
+                                    <i class="fas fa-print"></i> Generate Reports
+                                </a>
+                                <a href="organizers.php" class="btn-quick secondary">
+                                    <i class="fas fa-users-cog"></i> Manage Staff
+                                </a>
+                                <a href="settings.php" class="btn-quick secondary">
+                                    <i class="fas fa-cogs"></i> Event Settings
+                                </a>
+                            </div>
+                        <?php else: ?>
+                            <p style="color: #6b7280; font-size: 14px;">Create an event to unlock actions.</p>
+                            <button onclick="document.getElementById('createEventModal').style.display='flex'" class="btn-quick primary" style="justify-content:center;">
+                                Create Event Now
+                            </button>
+                        <?php endif; ?>
                     </div>
 
                 </div>

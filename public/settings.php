@@ -10,12 +10,12 @@ $u_id = $_SESSION['user_id'];
 $active_tab = $_GET['tab'] ?? 'event_details'; // Default tab
 
 // --- 1. FETCH ACTIVE EVENT ---
-$active_evt_query = $conn->prepare("SELECT * FROM events WHERE user_id = ? AND status = 'Active' LIMIT 1");
+$active_evt_query = $conn->prepare("SELECT * FROM events WHERE user_id = ? AND status = 'Active' AND is_deleted = 0 LIMIT 1");
 $active_evt_query->bind_param("i", $u_id);
 $active_evt_query->execute();
 $active_event = $active_evt_query->get_result()->fetch_assoc();
 
-// --- 2. FETCH TICKET DATA (If Active Event Exists) ---
+// --- 2. FETCH TICKET DATA ---
 $tickets = [];
 $total_unused = 0;
 $total_used = 0;
@@ -23,14 +23,14 @@ $total_used = 0;
 if ($active_event) {
     $event_id = $active_event['id'];
     
-    // Fetch Ticket Stats
+    // Stats
     $res = $conn->query("SELECT status, COUNT(*) as count FROM tickets WHERE event_id = $event_id GROUP BY status");
     while($row = $res->fetch_assoc()) {
         if ($row['status'] == 'Unused') $total_unused = $row['count'];
         if ($row['status'] == 'Used') $total_used = $row['count'];
     }
 
-    // Fetch Recent Tickets (Limit 100 for display performance)
+    // List (Limit 100)
     $tickets = $conn->query("SELECT * FROM tickets WHERE event_id = $event_id ORDER BY created_at DESC LIMIT 100")->fetch_all(MYSQLI_ASSOC);
 }
 
@@ -62,7 +62,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $current_pass = $_POST['current_password'];
         $new_pass = trim($_POST['my_password']);
 
-        // Verify Current Password
         $verifyStmt = $conn->prepare("SELECT password FROM users WHERE id = ?");
         $verifyStmt->bind_param("i", $u_id);
         $verifyStmt->execute();
@@ -74,7 +73,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit();
         }
 
-        // Proceed with Update
         if (!empty($new_pass)) {
             $hashed = password_hash($new_pass, PASSWORD_DEFAULT);
             $stmt = $conn->prepare("UPDATE users SET name=?, password=? WHERE id=?");
@@ -93,27 +91,76 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header("Location: settings.php?tab=account");
         exit();
     }
-}
 
-// --- 4. HANDLE SWITCH EVENT (GET) ---
-if (isset($_GET['open_id'])) {
-    $open_id = (int) $_GET['open_id']; 
-    $conn->begin_transaction();
-    try {
-        $conn->query("UPDATE events SET status = 'Inactive' WHERE user_id = $u_id");
-        $conn->query("UPDATE events SET status = 'Active' WHERE id = $open_id");
-        $conn->commit();
-        $_SESSION['success'] = "Event switched successfully.";
-    } catch (Exception $e) {
-        $conn->rollback();
-        $_SESSION['error'] = "Failed to switch event.";
+    // C. SWITCH EVENT (SECURE)
+    if (isset($_POST['switch_event'])) {
+        $target_id = (int)$_POST['event_id'];
+        $password_check = $_POST['password_check'];
+
+        $v_stmt = $conn->prepare("SELECT password FROM users WHERE id = ?");
+        $v_stmt->bind_param("i", $u_id);
+        $v_stmt->execute();
+        $real_hash = $v_stmt->get_result()->fetch_assoc()['password'];
+
+        if (!password_verify($password_check, $real_hash)) {
+            $_SESSION['error'] = "Authentication Failed: Incorrect Password.";
+            header("Location: settings.php?tab=history");
+            exit();
+        }
+
+        $conn->begin_transaction();
+        try {
+            $conn->query("UPDATE events SET status = 'Inactive' WHERE user_id = $u_id");
+            $conn->query("UPDATE events SET status = 'Active' WHERE id = $target_id AND user_id = $u_id");
+            $conn->commit();
+            $_SESSION['success'] = "Event switched successfully.";
+            header("Location: dashboard.php");
+            exit();
+        } catch (Exception $e) {
+            $conn->rollback();
+            $_SESSION['error'] = "Database Error: " . $e->getMessage();
+            header("Location: settings.php?tab=history");
+            exit();
+        }
     }
-    header("Location: ./dashboard.php");
-    exit();
+
+    // D. REMOVE EVENT (SECURE + PASSWORD CHECK)
+    if (isset($_POST['remove_event'])) {
+        $target_id = (int)$_POST['event_id'];
+        $password_check = $_POST['password_check'];
+        
+        if ($active_event && $target_id == $active_event['id']) {
+            $_SESSION['error'] = "Cannot remove the currently active event. Switch to another event first.";
+            header("Location: settings.php?tab=history");
+            exit();
+        }
+
+        $v_stmt = $conn->prepare("SELECT password FROM users WHERE id = ?");
+        $v_stmt->bind_param("i", $u_id);
+        $v_stmt->execute();
+        $real_hash = $v_stmt->get_result()->fetch_assoc()['password'];
+
+        if (!password_verify($password_check, $real_hash)) {
+            $_SESSION['error'] = "Authentication Failed: Incorrect Password. Event NOT removed.";
+            header("Location: settings.php?tab=history");
+            exit();
+        }
+
+        $stmt = $conn->prepare("UPDATE events SET is_deleted = 1, status = 'Inactive' WHERE id = ? AND user_id = ?");
+        $stmt->bind_param("ii", $target_id, $u_id);
+        
+        if ($stmt->execute()) {
+            $_SESSION['success'] = "Event moved to archive successfully.";
+        } else {
+            $_SESSION['error'] = "Failed to remove event.";
+        }
+        header("Location: settings.php?tab=history");
+        exit();
+    }
 }
 
-// Fetch All Events for History Tab
-$hist_stmt = $conn->prepare("SELECT * FROM events WHERE user_id = ? ORDER BY created_at DESC");
+// Fetch All Events for History Tab (Excluding Deleted)
+$hist_stmt = $conn->prepare("SELECT * FROM events WHERE user_id = ? AND is_deleted = 0 ORDER BY created_at DESC");
 $hist_stmt->bind_param("i", $u_id);
 $hist_stmt->execute();
 $all_events = $hist_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -136,7 +183,6 @@ $me = $me_stmt->get_result()->fetch_assoc();
         /* TABS CONTAINER */
         .settings-container { display: flex; gap: 30px; align-items: flex-start; }
         
-        /* LEFT SIDE: VERTICAL TABS */
         .settings-sidebar {
             width: 250px;
             background: white;
@@ -165,7 +211,6 @@ $me = $me_stmt->get_result()->fetch_assoc();
         .tab-btn.active { background-color: #fffbeb; color: #F59E0B; border-left: 4px solid #F59E0B; }
         .tab-btn i { width: 20px; text-align: center; }
 
-        /* RIGHT SIDE: CONTENT */
         .settings-content { flex-grow: 1; }
         
         .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: none; }
@@ -208,7 +253,8 @@ $me = $me_stmt->get_result()->fetch_assoc();
         .btn-clear { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 
         /* LOADING & UTILS */
-        .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255, 255, 255, 0.95); display: none; justify-content: center; align-items: center; z-index: 2000; flex-direction: column; }
+        /* FIX: INCREASED Z-INDEX to 9999 so it sits ABOVE modals */
+        .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); display: none; justify-content: center; align-items: center; z-index: 9999; flex-direction: column; color: white; }
         .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #F59E0B; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .toggle-password { position: absolute; right: 10px; top: 35px; cursor: pointer; color: #9ca3af; }
@@ -223,13 +269,23 @@ $me = $me_stmt->get_result()->fetch_assoc();
         .btn-report:hover { background: #1e293b; }
         .btn-danger-outline { background: white; border: 1px solid #fca5a5; color: #dc2626; padding: 10px 20px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
         .btn-danger-outline:hover { background: #fef2f2; }
+
+        /* MODAL STYLES */
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; justify-content: center; align-items: center; z-index: 2000; }
+        .modal-content { background: white; padding: 25px; width: 400px; border-radius: 12px; position: relative; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        .modal-title { margin-top: 0; margin-bottom: 15px; font-size: 18px; color: #111827; }
+        .modal-actions { text-align: right; margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px; }
+        .btn-cancel { background: #e5e7eb; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+        .btn-confirm { background: #F59E0B; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+        .btn-danger { background: #dc2626; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+        .btn-danger:hover { background: #b91c1c; }
     </style>
 </head>
 <body>
 
     <div id="loadingOverlay" class="loading-overlay">
         <div class="spinner"></div>
-        <div style="font-weight:600; color:#374151;">Switching Event...</div>
+        <div style="font-weight:600;">Processing...</div>
     </div>
 
     <div class="main-wrapper">
@@ -278,7 +334,7 @@ $me = $me_stmt->get_result()->fetch_assoc();
                                     <i class="fas fa-exclamation-circle"></i> No active event selected. Go to "Switch Event" to create or select one.
                                 </div>
                             <?php else: ?>
-                                <form method="POST">
+                                <form method="POST" onsubmit="showLoading()">
                                     <input type="hidden" name="event_id" value="<?= $active_event['id'] ?>">
                                     <div class="form-group">
                                         <label class="form-label">Event Name</label>
@@ -309,13 +365,11 @@ $me = $me_stmt->get_result()->fetch_assoc();
                                 <button class="btn-print" onclick="printTickets()"><i class="fas fa-print"></i> Print List</button>
                                 <?php endif; ?>
                             </div>
-
                             <?php if (!$active_event): ?>
                                 <div style="text-align:center; padding:20px; color:#9ca3af;">
                                     <i class="fas fa-exclamation-circle"></i> No active event selected.
                                 </div>
                             <?php else: ?>
-                                
                                 <div class="stats-grid">
                                     <div class="stat-box">
                                         <div class="stat-num" style="color:#059669;"><?= $total_unused ?></div>
@@ -326,9 +380,8 @@ $me = $me_stmt->get_result()->fetch_assoc();
                                         <div class="stat-label">Votes Cast (Used)</div>
                                     </div>
                                 </div>
-
                                 <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:20px; background:#f9fafb; padding:15px; border-radius:8px; flex-wrap:wrap;">
-                                    <form action="../api/tickets.php" method="POST" style="display:flex; gap:10px; align-items:flex-end; flex:1;">
+                                    <form action="../api/tickets.php" method="POST" style="display:flex; gap:10px; align-items:flex-end; flex:1;" onsubmit="showLoading()">
                                         <input type="hidden" name="action" value="generate">
                                         <input type="hidden" name="event_id" value="<?= $active_event['id'] ?>">
                                         <div style="flex:1; max-width:200px;">
@@ -337,16 +390,14 @@ $me = $me_stmt->get_result()->fetch_assoc();
                                         </div>
                                         <button type="submit" class="btn-generate">Generate Codes</button>
                                     </form>
-                                    
                                     <div style="margin-left:auto;">
-                                        <form action="../api/tickets.php" method="POST" onsubmit="return confirm('Are you sure? This will delete all UNUSED tickets.');">
+                                        <form action="../api/tickets.php" method="POST" onsubmit="if(confirm('Are you sure? This will delete all UNUSED tickets.')){ showLoading(); return true; } else { return false; }">
                                             <input type="hidden" name="action" value="clear_unused">
                                             <input type="hidden" name="event_id" value="<?= $active_event['id'] ?>">
                                             <button type="submit" class="btn-clear"><i class="fas fa-trash"></i> Clear Unused</button>
                                         </form>
                                     </div>
                                 </div>
-
                                 <div style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px;">
                                     <table class="ticket-table" id="printableTable">
                                         <thead>
@@ -365,14 +416,8 @@ $me = $me_stmt->get_result()->fetch_assoc();
                                                     <tr>
                                                         <td style="color:#9ca3af; font-family:sans-serif;"><?= $index + 1 ?></td>
                                                         <td style="font-size:16px; letter-spacing:1px;"><?= htmlspecialchars($t['code']) ?></td>
-                                                        <td>
-                                                            <span class="<?= ($t['status'] == 'Used') ? 'status-used' : 'status-unused' ?>">
-                                                                <?= $t['status'] ?>
-                                                            </span>
-                                                        </td>
-                                                        <td style="font-family:sans-serif; font-weight:normal; font-size:12px; color:#6b7280;">
-                                                            <?= date('M d, Y h:i A', strtotime($t['created_at'])) ?>
-                                                        </td>
+                                                        <td><span class="<?= ($t['status'] == 'Used') ? 'status-used' : 'status-unused' ?>"><?= $t['status'] ?></span></td>
+                                                        <td style="font-family:sans-serif; font-weight:normal; font-size:12px; color:#6b7280;"><?= date('M d, Y h:i A', strtotime($t['created_at'])) ?></td>
                                                     </tr>
                                                 <?php endforeach; ?>
                                             <?php endif; ?>
@@ -389,43 +434,16 @@ $me = $me_stmt->get_result()->fetch_assoc();
                                     <p>Generate official documents and manage event data.</p>
                                 </div>
                             </div>
-
                             <?php if (!$active_event): ?>
-                                <div style="text-align:center; padding:20px; color:#9ca3af;">
-                                    <i class="fas fa-exclamation-circle"></i> No active event selected.
-                                </div>
+                                <div style="text-align:center; padding:20px; color:#9ca3af;"><i class="fas fa-exclamation-circle"></i> No active event selected.</div>
                             <?php else: ?>
                                 <div class="report-item">
-                                    <div class="report-icon icon-pdf">
-                                        <i class="fas fa-file-pdf"></i>
-                                    </div>
+                                    <div class="report-icon icon-pdf"><i class="fas fa-file-pdf"></i></div>
                                     <div style="flex:1;">
                                         <h4 style="margin:0; font-size:16px; color:#1e293b;">Official Tabulation Report</h4>
-                                        <p style="margin:5px 0 0; font-size:13px; color:#64748b;">
-                                            Download the complete post-event report containing final rankings, audit matrices, award winners, and signature pages for judges.
-                                        </p>
+                                        <p style="margin:5px 0 0; font-size:13px; color:#64748b;">Download the complete post-event report.</p>
                                     </div>
-                                    <a href="print_report.php?event_id=<?= $active_event['id'] ?>" target="_blank" class="btn-report">
-                                        <i class="fas fa-print"></i> Generate PDF
-                                    </a>
-                                </div>
-
-                                <div style="margin-top:40px;">
-                                    <h4 style="font-size:14px; color:#dc2626; margin-bottom:10px; border-bottom:1px solid #fee2e2; padding-bottom:5px;">Danger Zone</h4>
-                                    <div class="report-item" style="border-color:#fca5a5; background:#fffafa;">
-                                        <div class="report-icon icon-danger">
-                                            <i class="fas fa-exclamation-triangle"></i>
-                                        </div>
-                                        <div style="flex:1;">
-                                            <h4 style="margin:0; font-size:16px; color:#991b1b;">Reset Event Data</h4>
-                                            <p style="margin:5px 0 0; font-size:13px; color:#b91c1c;">
-                                                Permanently delete all scores, rankings, and ticket usage for this event. This action cannot be undone.
-                                            </p>
-                                        </div>
-                                        <button class="btn-danger-outline" onclick="alert('This feature is disabled for safety reasons.')">
-                                            Reset Data
-                                        </button>
-                                    </div>
+                                    <a href="print_report.php?event_id=<?= $active_event['id'] ?>" target="_blank" class="btn-report"><i class="fas fa-print"></i> Generate PDF</a>
                                 </div>
                             <?php endif; ?>
                         </div>
@@ -436,9 +454,7 @@ $me = $me_stmt->get_result()->fetch_assoc();
                                     <h3>Event Switcher</h3>
                                     <p>Manage multiple pageants and switch between them.</p>
                                 </div>
-                                <button onclick="openModal()" style="background:#1f2937; color:white; border:none; padding:8px 15px; border-radius:6px; cursor:pointer; font-size:13px;">
-                                    + Create New
-                                </button>
+                                <button onclick="openCreateModal()" style="background:#1f2937; color:white; border:none; padding:8px 15px; border-radius:6px; cursor:pointer; font-size:13px;">+ Create New</button>
                             </div>
 
                             <table class="data-table">
@@ -458,7 +474,9 @@ $me = $me_stmt->get_result()->fetch_assoc();
                                         <td><span class="badge <?= $is_curr ? 'badge-active' : 'badge-inactive' ?>"><?= $evt['status'] ?></span></td>
                                         <td>
                                             <?php if (!$is_curr): ?>
-                                                <a href="#" onclick="confirmSwitch(<?= $evt['id'] ?>, '<?= htmlspecialchars($evt['name'], ENT_QUOTES) ?>')" style="color:#2563eb; text-decoration:none; font-size:13px; font-weight:600;">Switch</a>
+                                                <button onclick="openSwitchModal(<?= $evt['id'] ?>, '<?= htmlspecialchars($evt['name'], ENT_QUOTES) ?>')" style="background:none; border:none; color:#2563eb; cursor:pointer; font-weight:600; font-size:13px; margin-right:10px;">Switch</button>
+                                                
+                                                <button onclick="openRemoveModal(<?= $evt['id'] ?>, '<?= htmlspecialchars($evt['name'], ENT_QUOTES) ?>')" style="background:none; border:none; color:#dc2626; cursor:pointer; font-weight:600; font-size:13px;">Remove</button>
                                             <?php else: ?>
                                                 <span style="color:#059669; font-size:13px; font-weight:bold;"><i class="fas fa-check"></i> Active</span>
                                             <?php endif; ?>
@@ -476,7 +494,7 @@ $me = $me_stmt->get_result()->fetch_assoc();
                                     <p>Manage your login credentials.</p>
                                 </div>
                             </div>
-                            <form method="POST">
+                            <form method="POST" onsubmit="showLoading()">
                                 <div class="form-group">
                                     <label class="form-label">Your Name</label>
                                     <input type="text" name="my_name" class="form-control" value="<?= htmlspecialchars($me['name']) ?>" required>
@@ -485,22 +503,18 @@ $me = $me_stmt->get_result()->fetch_assoc();
                                     <label class="form-label">Email Address (Read Only)</label>
                                     <input type="email" class="form-control" value="<?= htmlspecialchars($me['email']) ?>" disabled style="background:#f3f4f6;">
                                 </div>
-                                
                                 <hr style="border:0; border-top:1px solid #f3f4f6; margin:20px 0;">
                                 <h4 style="margin-bottom:15px; font-size:14px; color:#111827;">Security Verification</h4>
-
                                 <div class="form-group">
                                     <label class="form-label">Current Password (Required)</label>
                                     <input type="password" name="current_password" id="currPass" class="form-control" required placeholder="Enter current password to save changes">
                                     <i class="fas fa-eye toggle-password" onclick="togglePassword('currPass', this)"></i>
                                 </div>
-
                                 <div class="form-group">
                                     <label class="form-label">New Password</label>
                                     <input type="password" name="my_password" id="newPass" class="form-control" placeholder="Leave blank to keep current password">
                                     <i class="fas fa-eye toggle-password" onclick="togglePassword('newPass', this)"></i>
                                 </div>
-
                                 <div style="text-align:right;">
                                     <button type="submit" name="update_profile" class="btn-save">Update Profile</button>
                                 </div>
@@ -513,29 +527,92 @@ $me = $me_stmt->get_result()->fetch_assoc();
         </div>
     </div>
 
-    <div id="createModal" class="modal-overlay" style="display:none;">
-        <div style="background:white; padding:30px; width:400px; border-radius:12px; position:relative;">
-            <h3 style="margin-bottom:15px;">Create New Event</h3>
-            <form action="../api/event.php" method="POST">
-                <input type="text" name="event_name" class="form-control" placeholder="Event Name" required style="margin-bottom:10px;">
-                <input type="date" name="event_date" class="form-control" required style="margin-bottom:10px;">
-                <input type="text" name="venue" class="form-control" placeholder="Venue" required style="margin-bottom:20px;">
-                <div style="text-align:right; display:flex; gap:10px; justify-content:flex-end;">
-                    <button type="button" onclick="document.getElementById('createModal').style.display='none'" style="background:#e5e7eb; border:none; padding:8px 15px; border-radius:4px; cursor:pointer;">Cancel</button>
-                    <button type="submit" style="background:#F59E0B; color:white; border:none; padding:8px 15px; border-radius:4px; font-weight:bold; cursor:pointer;">Create</button>
+    <div id="createModal" class="modal-overlay">
+        <div class="modal-content">
+            <h3 class="modal-title">Create New Event</h3>
+            <form action="../api/event.php" method="POST" onsubmit="showLoading()">
+                <input type="hidden" name="action" value="create"> 
+                <div class="form-group">
+                    <label class="form-label">Event Name</label>
+                    <input type="text" name="event_name" class="form-control" placeholder="e.g. Miss Universe 2025" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Date</label>
+                    <input type="date" name="event_date" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Venue</label>
+                    <input type="text" name="venue" class="form-control" placeholder="e.g. Convention Center" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" onclick="document.getElementById('createModal').style.display='none'">Cancel</button>
+                    <button type="submit" class="btn-confirm">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="switchModal" class="modal-overlay">
+        <div class="modal-content">
+            <h3 class="modal-title">Confirm Switch</h3>
+            <p style="color:#6b7280; font-size:14px; margin-bottom:20px;">
+                You are about to switch the active dashboard to <b id="switchTargetName"></b>. 
+                Please enter your password to confirm.
+            </p>
+            <form method="POST" onsubmit="showLoading()">
+                <input type="hidden" name="switch_event" value="1">
+                <input type="hidden" name="event_id" id="switchTargetId">
+                <div class="form-group">
+                    <input type="password" name="password_check" class="form-control" placeholder="Enter your password" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" onclick="document.getElementById('switchModal').style.display='none'">Cancel</button>
+                    <button type="submit" class="btn-confirm">Switch Event</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="removeModal" class="modal-overlay">
+        <div class="modal-content" style="border-top: 5px solid #dc2626;">
+            <h3 class="modal-title" style="color:#dc2626;"><i class="fas fa-exclamation-triangle"></i> Remove Event?</h3>
+            <div style="background:#fef2f2; border:1px solid #fca5a5; padding:15px; border-radius:6px; color:#991b1b; font-size:13px; margin-bottom:20px;">
+                <strong>WARNING:</strong> You are about to archive <b id="removeTargetName"></b>. 
+                This will remove it from your active list and hide all associated data.
+            </div>
+            <p style="font-size:14px; color:#374151; margin-bottom:10px;">Enter your password to confirm this action:</p>
+            
+            <form method="POST" onsubmit="showLoading()">
+                <input type="hidden" name="remove_event" value="1">
+                <input type="hidden" name="event_id" id="removeTargetId">
+                <div class="form-group">
+                    <input type="password" name="password_check" class="form-control" placeholder="Your Password" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" onclick="document.getElementById('removeModal').style.display='none'">Cancel</button>
+                    <button type="submit" class="btn-danger">Confirm Removal</button>
                 </div>
             </form>
         </div>
     </div>
 
     <script>
-        function openModal() { document.getElementById('createModal').style.display = 'flex'; }
+        function showLoading() {
+            document.getElementById('loadingOverlay').style.display = 'flex';
+        }
 
-        function confirmSwitch(id, name) {
-            if(confirm("Switch to '" + name + "'?")) {
-                document.getElementById('loadingOverlay').style.display = 'flex';
-                setTimeout(() => { window.location.href = "settings.php?open_id=" + id; }, 2000);
-            }
+        function openCreateModal() { document.getElementById('createModal').style.display = 'flex'; }
+        
+        function openSwitchModal(id, name) {
+            document.getElementById('switchTargetId').value = id;
+            document.getElementById('switchTargetName').innerText = name;
+            document.getElementById('switchModal').style.display = 'flex';
+        }
+
+        function openRemoveModal(id, name) {
+            document.getElementById('removeTargetId').value = id;
+            document.getElementById('removeTargetName').innerText = name;
+            document.getElementById('removeModal').style.display = 'flex';
         }
 
         function togglePassword(inputId, icon) {
@@ -551,13 +628,10 @@ $me = $me_stmt->get_result()->fetch_assoc();
             }
         }
 
-        // --- PRINT TICKETS ---
         function printTickets() {
             var divToPrint = document.getElementById("printableTable");
             var newWin = window.open("");
-            newWin.document.write("<html><head><title>Ticket Codes</title>");
-            newWin.document.write("<style>body{font-family: sans-serif;} table{width:100%; border-collapse:collapse;} th, td{border:1px solid #000; padding:8px; text-align:left;} th{background:#eee;}</style>");
-            newWin.document.write("</head><body>");
+            newWin.document.write("<html><head><title>Ticket Codes</title><style>body{font-family:sans-serif;} table{width:100%; border-collapse:collapse;} th, td{border:1px solid #000; padding:8px; text-align:left;} th{background:#eee;}</style></head><body>");
             newWin.document.write("<h3>Audience Tickets for <?= htmlspecialchars($active_event['name'] ?? 'Event') ?></h3>");
             newWin.document.write(divToPrint.outerHTML);
             newWin.document.write("</body></html>");
@@ -585,7 +659,6 @@ $me = $me_stmt->get_result()->fetch_assoc();
             <?php unset($_SESSION['error']); ?>
         <?php endif; ?>
         
-        // Handle URL Params for Success/Error (e.g. from Ticket API)
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('success')) showToast(urlParams.get('success'), 'success');
         if (urlParams.has('error')) showToast(urlParams.get('error'), 'error');

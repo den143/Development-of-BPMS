@@ -23,8 +23,7 @@ $organizers = [];
 if ($active_event) {
     $event_id = $active_event['id'];
 
-    // 2. Build Query linking Users via event_organizers
-    // [FIX] Added "AND u.role != 'Event Manager'" to hide the Admin
+    // 2. Build Query
     $sql = "SELECT eo.id as link_id, u.id as user_id, u.name, u.email, u.phone, u.role 
             FROM event_organizers eo 
             JOIN users u ON eo.user_id = u.id 
@@ -97,22 +96,30 @@ if ($active_event) {
         .toggle-password { position: absolute; right: 10px; top: 35px; cursor: pointer; color: #9ca3af; }
 
         /* Action Buttons */
+        .action-group { display: flex; gap: 5px; align-items: center; }
+        
         .btn-sm { 
             padding: 6px 12px; 
             border-radius: 4px; 
             font-size: 12px; 
             font-weight: bold; 
-            margin-right: 5px; 
             text-decoration: none; 
             border: none; 
             cursor: pointer;
             transition: opacity 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
         }
         .btn-sm:hover { opacity: 0.8; }
         
         .btn-edit { background: #e0f2fe; color: #0284c7; }
         .btn-remove { background: #fee2e2; color: #dc2626; }
         .btn-restore { background: #d1fae5; color: #059669; }
+        
+        /* New Resend Button Style (Matches Judges) */
+        .btn-resend { background: #e0e7ff; color: #4f46e5; }
+        .btn-resend:hover { background: #c7d2fe; }
     </style>
 </head>
 <body>
@@ -174,7 +181,7 @@ if ($active_event) {
                         </thead>
                         <tbody>
                             <?php if (empty($organizers)): ?>
-                                <tr><td colspan="5" style="text-align:center; padding: 30px; color:#9ca3af;">No organizers found for this event.</td></tr>
+                                <tr><td colspan="5" style="text-align:center; padding: 30px; color:#9ca3af;">No organizers found.</td></tr>
                             <?php else: ?>
                                 <?php foreach ($organizers as $org): ?>
                                     <tr>
@@ -190,17 +197,24 @@ if ($active_event) {
                                         <td><?= htmlspecialchars($org['email']) ?></td>
                                         <td><?= htmlspecialchars($org['phone'] ?? '-') ?></td>
                                         <td>
-                                            <?php if ($view === 'active'): ?>
-                                                <button class="btn-sm btn-edit" onclick='openEditModal(<?= json_encode($org) ?>)'>Edit</button>
-                                                <a href="../api/organizer.php?action=remove&id=<?= $org['link_id'] ?>" class="btn-sm btn-remove" onclick="return confirm('Remove from this event?');">Remove</a>
-                                                <form action="..api/resend_email.php" method="POST" style="display:inline-block;" onsubmit="return confirm('Resend invite and reset password?');">
-                                                    <input type="hidden" name="user_id" value="<?= $org['user_id'] ?>">
-                                                    <button type="submit" title="Resend Invite" style="background:none; border:none; cursor:pointer; color:#0d6efd; margin-left:5px;">
-                                                        <i class="fas fa-paper-plane"></i>
-                                                    </button>
-                                            <?php else: ?>
-                                                <a href="../api/organizer.php?action=restore&id=<?= $org['link_id'] ?>" class="btn-sm btn-restore" onclick="return confirm('Restore?');">Restore</a>
-                                            <?php endif; ?>
+                                            <div class="action-group">
+                                                <?php if ($view === 'active'): ?>
+                                                    
+                                                    <button class="btn-sm btn-edit" onclick='openEditModal(<?= json_encode($org) ?>)'>Edit</button>
+                                                    
+                                                    <a href="../api/organizer.php?action=remove&id=<?= $org['link_id'] ?>" class="btn-sm btn-remove" onclick="return confirm('Remove from this event?');">Remove</a>
+                                                    
+                                                    <form action="../api/resend_email.php" method="POST" style="margin:0;" onsubmit="return confirm('Resend invite and reset password?');">
+                                                        <input type="hidden" name="user_id" value="<?= $org['user_id'] ?>">
+                                                        <input type="hidden" name="role_type" value="Organizer"> <button type="submit" class="btn-sm btn-resend" title="Resend Invite">
+                                                            <i class="fas fa-paper-plane"></i> Resend
+                                                        </button>
+                                                    </form>
+
+                                                <?php else: ?>
+                                                    <a href="../api/organizer.php?action=restore&id=<?= $org['link_id'] ?>" class="btn-sm btn-restore" onclick="return confirm('Restore?');">Restore</a>
+                                                <?php endif; ?>
+                                            </div>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
@@ -249,7 +263,8 @@ if ($active_event) {
             <h3 style="margin-bottom:20px;">Edit Organizer</h3>
             <form action="../api/organizer.php" method="POST">
                 <input type="hidden" name="action" value="update">
-                <input type="hidden" name="org_id" id="edit_id"> <div class="form-group">
+                <input type="hidden" name="org_id" id="edit_id"> 
+                <div class="form-group">
                     <label>Role</label>
                     <select name="role" id="edit_role" class="form-control" required>
                         <option value="Judge Coordinator">Judge Coordinator</option>
@@ -295,7 +310,7 @@ if ($active_event) {
                 icon.classList.add("fa-eye");
             }
         }
-        // Toast logic matches judges/contestants
+        
         function showToast(message, type = 'success') {
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
