@@ -1,8 +1,1 @@
-# 1. Remove the file from the git index (but keep it on your computer)
-git rm --cached app/config/env.php
-
-# 2. Commit the change
-git commit -m "Security: Stop tracking env.php and add env.example.php"
-
-# 3. Push the changes
-git push origin main
+app/config/env.php
