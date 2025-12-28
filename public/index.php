@@ -103,6 +103,11 @@ $error = $_GET['error'] ?? null;
         .audience-btn { background: none; border: none; color: #059669; font-weight: 700; cursor: pointer; text-decoration: underline; font-size: 14px; }
         .audience-btn:hover { color: #047857; }
         
+        /* NEW: Demo Link Style */
+        .demo-mode-link { margin-top: 15px; padding-top: 10px; border-top: 1px dashed #d1d5db; text-align: center; }
+        .demo-mode-link a { color: #ef4444; font-size: 13px; font-weight: 700; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
+        .demo-mode-link a:hover { text-decoration: underline; color: #dc2626; }
+
         @media (max-width: 900px) {
             body { flex-direction: column; overflow-y: auto; }
             .brand-section { width: 100%; min-height: auto; padding: 15px 20px; flex-direction: row; justify-content: space-between; align-items: center; text-align: left; background: #111827; flex-shrink: 0; }
@@ -196,6 +201,12 @@ $error = $_GET['error'] ?? null;
 
                 <div class="audience-section">
                     Watching the show? <button class="audience-btn" onclick="toggleAudience(true)">Enter Ticket Code</button>
+                </div>
+
+                <div class="demo-mode-link">
+                    <a href="demo_access.php">
+                        <i class="fas fa-flask"></i> Enter Research Demo Mode
+                    </a>
                 </div>
             </div>
 
