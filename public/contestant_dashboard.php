@@ -12,6 +12,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $new_motto = trim($_POST['motto']);
     $new_hometown = trim($_POST['hometown']);
     
+    // A. HANDLE PHOTO UPLOAD
+    if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
+        $allowed_ext = ['jpg', 'jpeg', 'png', 'gif'];
+        $file_name = $_FILES['photo']['name'];
+        $file_ext = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
+
+        if (in_array($file_ext, $allowed_ext)) {
+            // Generate unique name: contestant_ID_TIMESTAMP.ext
+            $new_filename = "contestant_" . $user_id . "_" . time() . "." . $file_ext;
+            $upload_dir = __DIR__ . '/assets/uploads/contestants/';
+            
+            // Create directory if missing
+            if (!is_dir($upload_dir)) {
+                mkdir($upload_dir, 0777, true);
+            }
+
+            if (move_uploaded_file($_FILES['photo']['tmp_name'], $upload_dir . $new_filename)) {
+                // Update Photo in DB
+                $photo_stmt = $conn->prepare("UPDATE contestant_details SET photo = ? WHERE user_id = ?");
+                $photo_stmt->bind_param("si", $new_filename, $user_id);
+                $photo_stmt->execute();
+            }
+        }
+    }
+
+    // B. UPDATE TEXT DETAILS
     $upd = $conn->prepare("UPDATE contestant_details SET motto = ?, hometown = ? WHERE user_id = ?");
     $upd->bind_param("ssi", $new_motto, $new_hometown, $user_id);
     if ($upd->execute()) {
@@ -35,7 +61,6 @@ $data = $stmt->get_result()->fetch_assoc();
 
 // 3. SECURITY CHECK
 if ($data['status'] === 'Inactive' || $data['status'] === 'Rejected') {
-    // [Archived Screen Code omitted for brevity, same as before]
     die("Access Restricted. Contact Administrator."); 
 }
 
@@ -112,10 +137,23 @@ if ($data['event_date']) {
             box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); text-align: center;
             border: 1px solid #e2e8f0; position: sticky; top: 90px;
         }
-        .profile-card img {
-            width: 120px; height: 120px; border-radius: 50%; object-fit: cover;
-            border: 4px solid #f8fafc; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        
+        /* New Profile Image Styles */
+        .profile-img-wrapper {
+            position: relative; display: inline-block; margin-bottom: 15px;
         }
+        .profile-img-wrapper img {
+            width: 120px; height: 120px; border-radius: 50%; object-fit: cover;
+            border: 4px solid #f8fafc; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .camera-btn {
+            position: absolute; bottom: 5px; right: 5px;
+            background: #0f172a; color: white; width: 32px; height: 32px;
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+        .camera-btn:hover { transform: scale(1.1); background: var(--gold); }
 
         /* Timeline / Schedule */
         .timeline { list-style: none; padding: 0; margin: 0; }
@@ -190,9 +228,12 @@ if ($data['event_date']) {
             
             <ul class="sidebar-menu">
                 <li><a href="contestant_dashboard.php" class="active"><i class="fas fa-home"></i> <span>Dashboard</span></a></li>
-                </ul>
+            </ul>
             
             <div class="sidebar-footer">
+                <a href="settings.php">
+                    <i class="fas fa-cog"></i> <span>Settings</span>
+                </a>
                 <a href="logout.php" onclick="return confirm('Logout?');">
                     <i class="fas fa-sign-out-alt"></i> <span>Logout</span>
                 </a>
@@ -277,9 +318,18 @@ if ($data['event_date']) {
                     </div>
 
                     <div>
-                        <div class="profile-card">
-                            <img src="./assets/uploads/contestants/<?= htmlspecialchars($data['photo']) ?>" 
-                                 onerror="this.src='./assets/images/default_user.png'" alt="Profile">
+                        <form method="POST" enctype="multipart/form-data" class="profile-card">
+                            <input type="hidden" name="action" value="update_bio">
+                            
+                            <div class="profile-img-wrapper">
+                                <img id="profilePreview" src="./assets/uploads/contestants/<?= htmlspecialchars($data['photo']) ?>" 
+                                     onerror="this.src='./assets/images/default_user.png'" alt="Profile">
+                                
+                                <label for="photoUpload" class="camera-btn" title="Change Photo">
+                                    <i class="fas fa-camera"></i>
+                                </label>
+                                <input type="file" id="photoUpload" name="photo" accept="image/*" style="display:none;" onchange="previewImage(this)">
+                            </div>
                             
                             <h3 style="margin:0; color:#0f172a; font-size:20px;"><?= htmlspecialchars($data['name']) ?></h3>
                             <div style="color:#d97706; font-weight:700; font-size:13px; margin-bottom:20px; text-transform:uppercase; letter-spacing:0.5px;">
@@ -295,28 +345,24 @@ if ($data['event_date']) {
                                 </div>
                             </div>
 
-                            <form method="POST">
-                                <input type="hidden" name="action" value="update_bio">
-                                
-                                <div style="text-align: left; margin-bottom: 12px;">
-                                    <label style="font-size: 12px; font-weight: 700; color: #64748b; display:block; margin-bottom:4px;">Hometown</label>
-                                    <input type="text" name="hometown" class="form-control" 
-                                           style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px;"
-                                           value="<?= htmlspecialchars($data['hometown']) ?>">
-                                </div>
+                            <div style="text-align: left; margin-bottom: 12px;">
+                                <label style="font-size: 12px; font-weight: 700; color: #64748b; display:block; margin-bottom:4px;">Hometown</label>
+                                <input type="text" name="hometown" class="form-control" 
+                                       style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px;"
+                                       value="<?= htmlspecialchars($data['hometown']) ?>">
+                            </div>
 
-                                <div style="text-align: left; margin-bottom: 20px;">
-                                    <label style="font-size: 12px; font-weight: 700; color: #64748b; display:block; margin-bottom:4px;">Motto / Bio</label>
-                                    <textarea name="motto" rows="3" 
-                                              style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px; resize:none; font-family:inherit;"
-                                              ><?= htmlspecialchars($data['motto']) ?></textarea>
-                                </div>
+                            <div style="text-align: left; margin-bottom: 20px;">
+                                <label style="font-size: 12px; font-weight: 700; color: #64748b; display:block; margin-bottom:4px;">Motto / Bio</label>
+                                <textarea name="motto" rows="3" 
+                                          style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px; resize:none; font-family:inherit;"
+                                          ><?= htmlspecialchars($data['motto']) ?></textarea>
+                            </div>
 
-                                <button type="submit" style="width: 100%; background: #0f172a; color: white; border: none; padding: 12px; border-radius: 8px; font-weight:600; cursor: pointer;">
-                                    Save Changes
-                                </button>
-                            </form>
-                        </div>
+                            <button type="submit" style="width: 100%; background: #0f172a; color: white; border: none; padding: 12px; border-radius: 8px; font-weight:600; cursor: pointer;">
+                                Save Changes
+                            </button>
+                        </form>
                     </div>
 
                 </div>
@@ -331,6 +377,17 @@ if ($data['event_date']) {
             const overlay = document.getElementById('sidebarOverlay');
             sidebar.classList.toggle('active');
             overlay.classList.toggle('active');
+        }
+
+        // UPDATED: Image Preview Function
+        function previewImage(input) {
+            if (input.files && input.files[0]) {
+                var reader = new FileReader();
+                reader.onload = function (e) {
+                    document.getElementById('profilePreview').src = e.target.result;
+                }
+                reader.readAsDataURL(input.files[0]);
+            }
         }
     </script>
 

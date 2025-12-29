@@ -195,6 +195,9 @@ if ($event_id) {
             </ul>
             
             <div class="sidebar-footer">
+                <a href="settings.php">
+                    <i class="fas fa-cog"></i> <span>Settings</span>
+                </a>
                 <a href="logout.php" onclick="return confirm('Logout?');">
                     <i class="fas fa-sign-out-alt"></i> <span>Logout</span>
                 </a>

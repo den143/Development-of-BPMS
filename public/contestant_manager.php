@@ -3,444 +3,326 @@ require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
 requireRole('Contestant Manager');
 require_once __DIR__ . '/../app/config/database.php';
+require_once __DIR__ . '/../app/models/Contestant.php';
 
-$manager_id = $_SESSION['user_id'];
-$message = "";
-$error = "";
+// --- VIEW LOGIC ---
+$view = $_GET['view'] ?? 'active';
+$search = trim($_GET['search'] ?? '');
+$my_id = $_SESSION['user_id'];
 
-// --- 1. FETCH ASSIGNED EVENT ---
-$event_stmt = $conn->prepare("
-    SELECT e.id, e.name, e.venue, e.event_date 
+// Determine Status Filter
+if ($view === 'pending') {
+    $status_filter = 'Pending';
+    $page_title = "Pending Applications";
+} elseif ($view === 'archived') {
+    $status_filter = 'Inactive';
+    $page_title = "Archived Contestants";
+} else {
+    $status_filter = 'Active';
+    $page_title = "Official Candidates";
+}
+
+// 1. FETCH CONTESTANTS (Using the NEW Organizer Method)
+$contestants = Contestant::getAllByOrganizer($my_id, $status_filter, $search);
+
+// 2. FETCH ASSIGNED EVENT (For the Add Modal dropdown)
+$evt_stmt = $conn->prepare("
+    SELECT e.id, e.name 
     FROM events e 
     JOIN event_organizers eo ON e.id = eo.event_id 
-    WHERE eo.user_id = ? AND eo.status = 'Active' AND e.status = 'Active' 
-    LIMIT 1
+    WHERE eo.user_id = ? AND eo.status = 'Active' AND e.status = 'Active'
 ");
-$event_stmt->bind_param("i", $manager_id);
-$event_stmt->execute();
-$event_result = $event_stmt->get_result();
-$active_event = $event_result->fetch_assoc();
-
-$event_id = $active_event['id'] ?? null;
-$event_name = $active_event['name'] ?? "No Active Event Assigned";
-
-// --- 2. HANDLE ACTIONS ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $event_id) {
-    
-    // A. APPROVE / REJECT
-    if (isset($_POST['action']) && in_array($_POST['action'], ['approve', 'reject'])) {
-        $target_id = intval($_POST['user_id']);
-        $new_status = ($_POST['action'] === 'approve') ? 'Active' : 'Rejected';
-        
-        $stmt = $conn->prepare("UPDATE users SET status = ? WHERE id = ?");
-        $stmt->bind_param("si", $new_status, $target_id);
-        
-        if ($stmt->execute()) {
-            if ($new_status === 'Active') {
-                // Ensure detail row exists
-                $check = $conn->prepare("SELECT id FROM contestant_details WHERE user_id = ? AND event_id = ?");
-                $check->bind_param("ii", $target_id, $event_id);
-                $check->execute();
-                
-                // Get next available number
-                $num_q = $conn->prepare("SELECT MAX(contestant_number) as max_num FROM contestant_details WHERE event_id = ?");
-                $num_q->bind_param("i", $event_id);
-                $num_q->execute();
-                $next_num = ($num_q->get_result()->fetch_assoc()['max_num'] ?? 0) + 1;
-
-                if ($check->get_result()->num_rows == 0) {
-                    $ins = $conn->prepare("INSERT INTO contestant_details (user_id, event_id, contestant_number) VALUES (?, ?, ?)");
-                    $ins->bind_param("iii", $target_id, $event_id, $next_num);
-                    $ins->execute();
-                } else {
-                    $upd = $conn->prepare("UPDATE contestant_details SET contestant_number = ? WHERE user_id = ? AND event_id = ? AND contestant_number IS NULL");
-                    $upd->bind_param("iii", $next_num, $target_id, $event_id);
-                    $upd->execute();
-                }
-            }
-            $message = "Contestant status updated.";
-        } else {
-            $error = "Failed to update status.";
-        }
-    }
-
-    // B. AUTO-SEQUENCE
-    if (isset($_POST['action']) && $_POST['action'] === 'resequence_all') {
-        $q = $conn->prepare("
-            SELECT cd.id 
-            FROM contestant_details cd 
-            JOIN users u ON cd.user_id = u.id 
-            WHERE cd.event_id = ? AND u.status = 'Active' 
-            ORDER BY u.name ASC
-        ");
-        $q->bind_param("i", $event_id);
-        $q->execute();
-        $res = $q->get_result();
-        
-        $counter = 1;
-        while($row = $res->fetch_assoc()) {
-            $upd = $conn->prepare("UPDATE contestant_details SET contestant_number = ? WHERE id = ?");
-            $upd->bind_param("ii", $counter, $row['id']);
-            $upd->execute();
-            $counter++;
-        }
-        $message = "Roster re-sorted alphabetically (1 to " . ($counter-1) . ")";
-    }
-
-    // C. UPDATE ORDER (MANUAL)
-    if (isset($_POST['action']) && $_POST['action'] === 'update_order') {
-        $detail_id = intval($_POST['detail_id']);
-        $new_number = intval($_POST['contestant_number']);
-        
-        $stmt = $conn->prepare("UPDATE contestant_details SET contestant_number = ? WHERE id = ?");
-        $stmt->bind_param("ii", $new_number, $detail_id);
-        if ($stmt->execute()) {
-            $message = "Candidate number updated.";
-        }
-    }
-
-    // D. EDIT PROFILE
-    if (isset($_POST['action']) && $_POST['action'] === 'edit_profile') {
-        $detail_id = intval($_POST['detail_id']);
-        $age = intval($_POST['age']);
-        $height = floatval($_POST['height']);
-        $vital = trim($_POST['vital_stats']);
-        $hometown = trim($_POST['hometown']);
-        $motto = trim($_POST['motto']);
-        
-        $photo_sql_part = "";
-        $types = "idsssi";
-        $params = [$age, $height, $vital, $hometown, $motto, $detail_id];
-
-        if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
-            $uploadDir = __DIR__ . '/assets/uploads/contestants/';
-            if (!is_dir($uploadDir)) mkdir($uploadDir, 0777, true);
-            
-            $ext = pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION);
-            $filename = 'contestant_' . time() . '.' . $ext;
-            
-            if (move_uploaded_file($_FILES['photo']['tmp_name'], $uploadDir . $filename)) {
-                $photo_sql_part = ", photo = ?";
-                array_splice($params, 5, 0, $filename); 
-                $types = "idssssi";
-            }
-        }
-
-        $sql = "UPDATE contestant_details SET age=?, height=?, vital_stats=?, hometown=?, motto=? $photo_sql_part WHERE id=?";
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param($types, ...$params);
-        
-        if ($stmt->execute()) {
-            $message = "Profile updated.";
-        }
-    }
-}
-
-// --- 3. FETCH DATA ---
-$pending_contestants = [];
-$active_contestants = [];
-$stats = [ 'total' => 0, 'pending' => 0, 'incomplete' => 0 ];
-
-if ($event_id) {
-    // Pending
-    $p_stmt = $conn->prepare("
-        SELECT u.id, u.name, u.email 
-        FROM users u 
-        JOIN contestant_details cd ON u.id = cd.user_id 
-        WHERE cd.event_id = ? AND u.status = 'Pending'
-    ");
-    $p_stmt->bind_param("i", $event_id);
-    $p_stmt->execute();
-    $res = $p_stmt->get_result();
-    while($row = $res->fetch_assoc()) $pending_contestants[] = $row;
-    $stats['pending'] = count($pending_contestants);
-
-    // Active
-    $a_stmt = $conn->prepare("
-        SELECT u.id as user_id, u.name, cd.id as detail_id, cd.contestant_number, 
-               cd.hometown, cd.age, cd.height, cd.vital_stats, cd.motto, cd.photo
-        FROM users u 
-        JOIN contestant_details cd ON u.id = cd.user_id 
-        WHERE cd.event_id = ? AND u.status = 'Active'
-        ORDER BY cd.contestant_number ASC, u.name ASC
-    ");
-    $a_stmt->bind_param("i", $event_id);
-    $a_stmt->execute();
-    $res = $a_stmt->get_result();
-    while($row = $res->fetch_assoc()) {
-        $active_contestants[] = $row;
-        if (empty($row['photo']) || $row['photo'] === 'default_contestant.png' || 
-            empty($row['motto']) || empty($row['vital_stats'])) {
-            $stats['incomplete']++;
-        }
-    }
-    $stats['total'] = count($active_contestants);
-}
+$evt_stmt->bind_param("i", $my_id);
+$evt_stmt->execute();
+$my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Contestant Manager - BPMS</title>
     <link rel="stylesheet" href="./assets/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        .sidebar { background-color: #831843; }
-        .sidebar-header { background-color: #500724; border-bottom-color: #9d174d; }
-        .sidebar-menu li a:hover, .sidebar-menu li a.active { background-color: rgba(255, 255, 255, 0.1); color: #FBCFE8; border-left-color: #FBCFE8; }
-        .navbar-title { color: #831843; }
-        .stat-icon.pink { background-color: rgba(219, 39, 119, 0.1); color: #DB2777; }
-        .stat-card:hover { border-bottom-color: #DB2777; }
+        /* Reusing the exact same styles as contestants.php */
+        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .header-actions { display: flex; gap: 10px; }
+        .btn-add { background-color: #F59E0B; color: white; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 5px; }
+        .btn-add:hover { background-color: #d97706; }
+        .btn-secondary { background-color: white; border: 1px solid #d1d5db; color: #374151; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600; transition: background 0.2s; }
+        .btn-secondary:hover { background-color: #f3f4f6; }
+        .tabs { display: flex; gap: 15px; margin-bottom: 20px; border-bottom: 2px solid #e5e7eb; padding-bottom: 0; }
+        .tab-link { padding: 10px 15px; text-decoration: none; color: #6b7280; font-weight: 600; font-size: 14px; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: color 0.2s; }
+        .tab-link:hover { color: #1f2937; }
+        .tab-link.active { border-bottom-color: #F59E0B; color: #F59E0B; }
+        .search-container { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; display: flex; gap: 10px; align-items: center; }
+        .search-input { padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; flex-grow: 1; font-size: 14px; }
+        .btn-search { background-color: #1f2937; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+        .btn-reset { color: #6b7280; text-decoration: none; font-size: 14px; padding: 0 10px; }
         
-        .contestant-thumb { width: 45px; height: 45px; border-radius: 50%; object-fit: cover; border: 2px solid #e5e7eb; }
-        .order-input { width: 50px; padding: 5px; border: 1px solid #d1d5db; border-radius: 4px; text-align: center; font-weight: bold; }
-        .btn-mini { padding: 4px 8px; background: #e5e7eb; border-radius: 4px; color: #374151; cursor: pointer; border: none; }
-        .btn-mini:hover { background: #d1d5db; }
+        /* Grid & Cards */
+        .contestant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 15px; }
+        .contestant-card { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; flex-direction: column; transition: transform 0.2s, box-shadow 0.2s; }
+        .contestant-card:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .card-img { width: 100%; height: 140px; object-fit: cover; background: #f3f4f6; }
+        .card-body { padding: 12px; flex-grow: 1; }
+        .card-title { font-size: 15px; font-weight: bold; color: #1f2937; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .card-subtitle { font-size: 11px; color: #F59E0B; margin-bottom: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+        .stats-row { display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; margin-bottom: 4px; border-bottom: 1px solid #f3f4f6; padding-bottom: 4px; }
+        .motto-text { font-style: italic; color: #9ca3af; font-size: 11px; margin-top: 6px; line-height: 1.3; height: 28px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
+        .card-actions { padding: 8px 12px; background: #f9fafb; border-top: 1px solid #f3f4f6; display: flex; justify-content: center; gap: 8px; }
+        .btn-sm { padding: 6px 10px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; text-decoration: none; border: none; flex: 1; text-align: center; transition: opacity 0.2s; }
+        .btn-sm:hover { opacity: 0.9; }
+        .btn-approve { background: #d1fae5; color: #059669; }
+        .btn-reject { background: #fee2e2; color: #dc2626; }
+        .btn-edit { background: #e0f2fe; color: #0284c7; }
+        .btn-remove { background: #fee2e2; color: #dc2626; }
+        .btn-restore { background: #d1fae5; color: #059669; }
 
         /* Modal Styles */
         .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 1000; }
-        .modal-content { background: white; padding: 25px; width: 500px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-height: 90vh; overflow-y: auto; }
-        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-        .full-width { grid-column: span 2; }
+        .modal-content { background: white; padding: 25px; width: 450px; border-radius: 12px; max-height: 90vh; overflow-y: auto; }
+        .form-group { margin-bottom: 12px; position: relative; }
+        .form-group label { display: block; margin-bottom: 4px; font-weight: 500; font-size: 13px; }
+        .form-control { width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px; }
+        .form-row { display: flex; gap: 10px; }
+        .form-row .form-group { flex: 1; }
+        .toggle-password { position: absolute; right: 10px; top: 30px; cursor: pointer; color: #9ca3af; }
     </style>
 </head>
 <body>
 
     <div class="main-wrapper">
-        
-        <div class="sidebar">
-            <div class="sidebar-header">
-                <img src="assets/images/BPMS_logo.png" alt="BPMS Logo" class="sidebar-logo">
-                <div class="brand-text">
-                    <div class="brand-name">BPMS</div>
-                    <div class="brand-subtitle">Contestant Manager</div>
-                </div>
-            </div>
-            
-            <ul class="sidebar-menu">
-                <li><a href="contestant_manager.php" class="active"><i class="fas fa-users-cog"></i> <span>Manage Roster</span></a></li>
-            </ul>
-            
-            <div class="sidebar-footer">
-                <a href="logout.php" onclick="return confirm('Logout?');">
-                    <i class="fas fa-sign-out-alt"></i> <span>Logout</span>
-                </a>
-            </div>
-        </div>
+        <?php require_once __DIR__ . '/../app/views/partials/sidebar.php'; ?>
 
         <div class="content-area">
-            
             <div class="navbar">
                 <div class="navbar-title">Roster Management</div>
-                <div style="font-size: 14px; color: #6b7280;">
-                    Event: <strong><?= htmlspecialchars($event_name) ?></strong>
-                </div>
             </div>
 
             <div class="container">
-                
-                <?php if ($message): ?>
-                    <div class="toast success" style="margin-bottom: 20px; background: #10B981; color: white; padding: 10px; border-radius: 6px;">
-                        <i class="fas fa-check-circle"></i> <?= htmlspecialchars($message) ?>
-                    </div>
-                <?php endif; ?>
-                <?php if ($error): ?>
-                    <div class="toast error" style="margin-bottom: 20px; background: #EF4444; color: white; padding: 10px; border-radius: 6px;">
-                        <i class="fas fa-exclamation-circle"></i> <?= htmlspecialchars($error) ?>
-                    </div>
-                <?php endif; ?>
+                <div id="toast-container" class="toast-container"></div>
 
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon pink"><i class="fas fa-female"></i></div>
-                        <div class="stat-info">
-                            <h3><?= $stats['total'] ?></h3>
-                            <p>Official Candidates</p>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon" style="background-color: rgba(245, 158, 11, 0.1); color: #F59E0B;">
-                            <i class="fas fa-user-clock"></i>
-                        </div>
-                        <div class="stat-info">
-                            <h3><?= $stats['pending'] ?></h3>
-                            <p>Pending Approval</p>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon" style="background-color: rgba(239, 68, 68, 0.1); color: #EF4444;">
-                            <i class="fas fa-clipboard-check"></i>
-                        </div>
-                        <div class="stat-info">
-                            <h3><?= $stats['incomplete'] ?></h3>
-                            <p>Incomplete Profiles</p>
-                        </div>
+                <div class="page-header">
+                    <h2>Manage Roster</h2>
+                    <div class="header-actions">
+                        <?php if ($view === 'archived'): ?>
+                            <a href="?view=active" class="btn-secondary">← Back to List</a>
+                        <?php else: ?>
+                            <a href="?view=archived" class="btn-secondary"><i class="fas fa-archive"></i> View Archived</a>
+                        <?php endif; ?>
+                        
+                        <button class="btn-add" onclick="openModal('addModal')"><i class="fas fa-plus"></i> Manually Add</button>
                     </div>
                 </div>
 
-                <?php if ($stats['pending'] > 0): ?>
-                <div class="card-section" style="margin-bottom: 30px; border: 1px solid #FCD34D;">
-                    <div class="card-title" style="color: #B45309;">
-                        <i class="fas fa-exclamation-circle"></i> Pending Applications
-                    </div>
-                    <table style="width:100%; border-collapse: collapse;">
-                        <tbody>
-                            <?php foreach ($pending_contestants as $p): ?>
-                            <tr style="border-bottom: 1px solid #f3f4f6;">
-                                <td style="padding: 15px;">
-                                    <strong><?= htmlspecialchars($p['name']) ?></strong><br>
-                                    <span style="font-size:12px; color:#6b7280;"><?= htmlspecialchars($p['email']) ?></span>
-                                </td>
-                                <td style="text-align: right;">
-                                    <form method="POST" style="display:inline;">
-                                        <input type="hidden" name="user_id" value="<?= $p['id'] ?>">
-                                        <button type="submit" name="action" value="approve" class="btn-mini" style="background:#10B981; color:white; margin-right:5px;">Approve & #</button>
-                                        <button type="submit" name="action" value="reject" class="btn-mini" style="background:#EF4444; color:white;">Reject</button>
-                                    </form>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                <?php if ($view !== 'archived'): ?>
+                <div class="tabs">
+                    <a href="?view=active" class="tab-link <?= $view === 'active' ? 'active' : '' ?>">Official Candidates</a>
+                    <a href="?view=pending" class="tab-link <?= $view === 'pending' ? 'active' : '' ?>">Pending Applications</a>
                 </div>
+                <?php else: ?>
+                    <div style="margin-bottom: 20px; font-size: 14px; color: #6b7280;">
+                        Showing <strong>Archived (Removed)</strong> contestants.
+                    </div>
                 <?php endif; ?>
 
-                <div class="card-section">
-                    <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
-                        <span>Official Contestant Roster</span>
-                        <form method="POST" onsubmit="return confirm('This will reset all numbers to 1, 2, 3... Alphabetically. Continue?');">
-                            <input type="hidden" name="action" value="resequence_all">
-                            <button type="submit" style="background:#374151; color:white; padding:6px 12px; border:none; border-radius:4px; font-size:12px; cursor:pointer;">
-                                <i class="fas fa-sort-numeric-down"></i> Auto-Number All
-                            </button>
-                        </form>
-                    </div>
-                    
-                    <?php if (empty($active_contestants)): ?>
-                        <p style="color:#6b7280; text-align:center; padding:20px;">No active contestants found.</p>
-                    <?php else: ?>
-                    
-                    <table style="width:100%; border-collapse: collapse;">
-                        <thead>
-                            <tr style="background:#f9fafb; text-align:left; color:#374151; font-size:13px; text-transform:uppercase;">
-                                <th style="padding:15px;">#</th>
-                                <th style="padding:15px;">Profile</th>
-                                <th style="padding:15px;">Details</th>
-                                <th style="padding:15px;">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($active_contestants as $c): 
-                                $imgSrc = !empty($c['photo']) ? "./assets/uploads/contestants/" . $c['photo'] : "./assets/images/default_user.png";
-                            ?>
-                            <tr style="border-bottom: 1px solid #f3f4f6;">
-                                <td style="padding:15px; width: 80px;">
-                                    <form method="POST">
-                                        <input type="hidden" name="action" value="update_order">
-                                        <input type="hidden" name="detail_id" value="<?= $c['detail_id'] ?>">
-                                        <input type="number" name="contestant_number" class="order-input" value="<?= $c['contestant_number'] ?>" placeholder="#">
-                                        <button type="submit" style="display:none;"></button>
-                                    </form>
-                                </td>
-                                
-                                <td style="padding:15px;">
-                                    <div style="display:flex; align-items:center; gap:15px;">
-                                        <img src="<?= htmlspecialchars($imgSrc) ?>" class="contestant-thumb" onerror="this.src='./assets/images/default_user.png'">
-                                        <div>
-                                            <div style="font-weight:bold; color:#111827;"><?= htmlspecialchars($c['name']) ?></div>
-                                            <div style="font-size:12px; color:#6b7280;"><?= htmlspecialchars($c['hometown'] ?? 'No Hometown') ?></div>
-                                        </div>
-                                    </div>
-                                </td>
-
-                                <td style="padding:15px; font-size:13px; color:#4b5563;">
-                                    <div><strong>Age:</strong> <?= $c['age'] ?? '-' ?> | <strong>Height:</strong> <?= $c['height'] ?? '-' ?> cm</div>
-                                    <div><strong>Vitals:</strong> <?= htmlspecialchars($c['vital_stats'] ?? '-') ?></div>
-                                </td>
-
-                                <td style="padding:15px;">
-                                    <button class="btn-mini" onclick="openEditModal(<?= $c['detail_id'] ?>)">
-                                        <i class="fas fa-edit"></i> Edit
-                                    </button>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                <form method="GET" action="contestant_manager.php" class="search-container">
+                    <input type="hidden" name="view" value="<?= htmlspecialchars($view) ?>">
+                    <input type="text" name="search" class="search-input" placeholder="Search by name or hometown..." value="<?= htmlspecialchars($search) ?>">
+                    <button type="submit" class="btn-search"><i class="fas fa-search"></i> Search</button>
+                    <?php if (!empty($search)): ?>
+                        <a href="contestant_manager.php?view=<?= $view ?>" class="btn-reset">Reset</a>
                     <?php endif; ?>
-                </div>
+                </form>
+
+                <?php if (empty($contestants)): ?>
+                    <div style="text-align:center; padding:50px; color:#9ca3af; background:white; border-radius:8px; border: 1px dashed #d1d5db;">
+                        <i class="fas fa-folder-open" style="font-size:30px; margin-bottom:10px;"></i>
+                        <p>No contestants found matching "<?= htmlspecialchars($search) ?>" in <?= strtolower($page_title) ?>.</p>
+                    </div>
+                <?php else: ?>
+                    <div class="contestant-grid">
+                        <?php foreach ($contestants as $c): ?>
+                            <div class="contestant-card">
+                                <img src="./assets/uploads/contestants/<?= htmlspecialchars($c['photo']) ?>" alt="Photo" class="card-img" onerror="this.src='./assets/images/default_user.png'">
+                                
+                                <div class="card-body">
+                                    <div class="card-title"><?= htmlspecialchars($c['name']) ?></div>
+                                    <div class="card-subtitle"><?= htmlspecialchars($c['hometown']) ?></div>
+                                    
+                                    <div class="stats-row">
+                                        <span>Age: <?= $c['age'] ?></span>
+                                        <span>Ht: <?= htmlspecialchars($c['height']) ?></span>
+                                    </div>
+                                    <div class="stats-row">
+                                        <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><?= htmlspecialchars($c['event_name']) ?></span>
+                                    </div>
+
+                                    <?php if (!empty($c['motto'])): ?>
+                                        <div class="motto-text">"<?= htmlspecialchars($c['motto']) ?>"</div>
+                                    <?php endif; ?>
+                                </div>
+
+                                <div class="card-actions">
+                                    <?php if ($view === 'pending'): ?>
+                                        <a href="../api/contestant.php?action=approve&id=<?= $c['id'] ?>" class="btn-sm btn-approve" onclick="return confirm('Approve this candidate?');">Approve</a>
+                                        <a href="../api/contestant.php?action=reject&id=<?= $c['id'] ?>" class="btn-sm btn-reject" onclick="return confirm('Reject this application?');">Reject</a>
+                                    
+                                    <?php elseif ($view === 'archived'): ?>
+                                        <a href="../api/contestant.php?action=restore&id=<?= $c['id'] ?>" class="btn-sm btn-restore" onclick="return confirm('Restore this contestant?');">Restore</a>
+                                    
+                                    <?php else: ?>
+                                        <button class="btn-sm btn-edit" onclick='openEditModal(<?= json_encode($c) ?>)'>Edit</button>
+                                        <a href="../api/contestant.php?action=remove&id=<?= $c['id'] ?>" class="btn-sm btn-remove" onclick="return confirm('Remove this contestant?');">Remove</a>
+                                        
+                                        <form action="../api/resend_email.php" method="POST" style="display:inline;" onsubmit="return confirm('This will RESET the password and email it to the contestant. Proceed?');">
+                                            <input type="hidden" name="user_id" value="<?= $c['id'] ?>">
+                                            <input type="hidden" name="role_type" value="Contestant">
+                                            <button type="submit" class="btn-sm" style="background-color: #3b82f6; color: white; border: none; cursor: pointer;" title="Resend Invite">
+                                                <i class="fas fa-envelope"></i>
+                                            </button>
+                                        </form>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
 
             </div>
+        </div>
+    </div>
+
+    <div id="addModal" class="modal-overlay">
+        <div class="modal-content">
+            <h3>Add New Contestant</h3>
+            <form action="../api/contestant.php" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="action" value="create">
+                
+                <div class="form-group">
+                    <label>Assigned Event</label>
+                    <select name="event_id" class="form-control" required>
+                        <?php foreach ($my_events as $evt): ?>
+                            <option value="<?= $evt['id'] ?>"><?= htmlspecialchars($evt['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Name</label><input type="text" name="name" class="form-control" required></div>
+                    <div class="form-group"><label>Age</label><input type="number" name="age" class="form-control" required></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Email</label><input type="email" name="email" class="form-control" required></div>
+                    <div class="form-group"><label>Password</label>
+                        <input type="password" name="password" id="addPass" class="form-control" required>
+                        <i class="fas fa-eye toggle-password" onclick="togglePassword('addPass', this)"></i>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Height</label><input type="text" name="height" class="form-control"></div>
+                    <div class="form-group"><label>Vital Stats</label><input type="text" name="vital_stats" class="form-control"></div>
+                </div>
+                <div class="form-group"><label>Hometown</label><input type="text" name="hometown" class="form-control" required></div>
+                <div class="form-group"><label>Motto</label><input type="text" name="motto" class="form-control"></div>
+                <div class="form-group"><label>Photo</label><input type="file" name="photo" class="form-control" accept="image/*" required></div>
+                
+                <div style="text-align:right; margin-top:15px;">
+                    <button type="button" onclick="closeModal('addModal')" style="padding:8px 15px; border:none; background:#e5e7eb; border-radius:4px; cursor:pointer;">Cancel</button>
+                    <button type="submit" style="padding:8px 15px; border:none; background:#F59E0B; color:white; border-radius:4px; font-weight:bold; cursor:pointer;">Save</button>
+                </div>
+            </form>
         </div>
     </div>
 
     <div id="editModal" class="modal-overlay">
         <div class="modal-content">
-            <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
-                <h3 style="margin:0;">Edit Profile</h3>
-                <span onclick="document.getElementById('editModal').style.display='none'" style="cursor:pointer; font-size:20px;">&times;</span>
-            </div>
-            <form method="POST" enctype="multipart/form-data">
-                <input type="hidden" name="action" value="edit_profile">
-                <input type="hidden" name="detail_id" id="edit_detail_id">
-                <div class="form-grid">
-                    <div class="full-width">
-                        <label>Full Name</label>
-                        <input type="text" id="edit_name" disabled style="width:100%; padding:8px; margin-top:5px; background:#eee; border:1px solid #ccc;">
-                    </div>
-                    <div>
-                        <label>Hometown</label>
-                        <input type="text" name="hometown" id="edit_hometown" style="width:100%; padding:8px; margin-top:5px; border:1px solid #ccc;">
-                    </div>
-                    <div>
-                        <label>Vital Stats</label>
-                        <input type="text" name="vital_stats" id="edit_vitals" style="width:100%; padding:8px; margin-top:5px; border:1px solid #ccc;">
-                    </div>
-                    <div>
-                        <label>Age</label>
-                        <input type="number" name="age" id="edit_age" style="width:100%; padding:8px; margin-top:5px; border:1px solid #ccc;">
-                    </div>
-                    <div>
-                        <label>Height (cm)</label>
-                        <input type="number" step="0.01" name="height" id="edit_height" style="width:100%; padding:8px; margin-top:5px; border:1px solid #ccc;">
-                    </div>
-                    <div class="full-width">
-                        <label>Motto</label>
-                        <textarea name="motto" id="edit_motto" rows="3" style="width:100%; padding:8px; margin-top:5px; border:1px solid #ccc;"></textarea>
-                    </div>
-                    <div class="full-width">
-                        <label>Photo</label>
-                        <input type="file" name="photo" style="width:100%; margin-top:5px;">
+            <h3>Edit Contestant</h3>
+            <form action="../api/contestant.php" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="action" value="update">
+                <input type="hidden" name="contestant_id" id="edit_id">
+                <div class="form-group">
+                    <label>Assigned Event</label>
+                    <select name="event_id" id="edit_event_id" class="form-control" required>
+                        <?php foreach ($my_events as $evt): ?>
+                            <option value="<?= $evt['id'] ?>"><?= htmlspecialchars($evt['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Name</label><input type="text" name="name" id="edit_name" class="form-control" required></div>
+                    <div class="form-group"><label>Age</label><input type="number" name="age" id="edit_age" class="form-control" required></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>Email</label><input type="email" name="email" id="edit_email" class="form-control" required></div>
+                    <div class="form-group"><label>Change Password</label>
+                        <input type="password" name="password" id="editPass" class="form-control" placeholder="Enter strong password">
+                        <i class="fas fa-eye toggle-password" onclick="togglePassword('editPass', this)"></i>
                     </div>
                 </div>
-                <button type="submit" style="width:100%; margin-top:15px; background:#DB2777; color:white; padding:10px; border:none; cursor:pointer;">Save</button>
+                <div class="form-row">
+                    <div class="form-group"><label>Height</label><input type="text" name="height" id="edit_height" class="form-control"></div>
+                    <div class="form-group"><label>Vital Stats</label><input type="text" name="vital_stats" id="edit_vital" class="form-control"></div>
+                </div>
+                <div class="form-group"><label>Hometown</label><input type="text" name="hometown" id="edit_hometown" class="form-control" required></div>
+                <div class="form-group"><label>Motto</label><input type="text" name="motto" id="edit_motto" class="form-control"></div>
+                <div class="form-group"><label>Update Photo (Optional)</label><input type="file" name="photo" class="form-control" accept="image/*"></div>
+                <div style="text-align:right; margin-top:15px;">
+                    <button type="button" onclick="closeModal('editModal')" style="padding:8px 15px; border:none; background:#e5e7eb; border-radius:4px; cursor:pointer;">Cancel</button>
+                    <button type="submit" style="padding:8px 15px; border:none; background:#F59E0B; color:white; border-radius:4px; font-weight:bold; cursor:pointer;">Save Changes</button>
+                </div>
             </form>
         </div>
     </div>
 
     <script>
-        // PASS DATA SAFELY TO JS
-        const contestantsData = <?= json_encode($active_contestants) ?>;
+        function openModal(id) { document.getElementById(id).style.display = 'flex'; }
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+        
+        function openEditModal(c) {
+            document.getElementById('edit_id').value = c.id;
+            document.getElementById('edit_event_id').value = c.event_id;
+            document.getElementById('edit_name').value = c.name;
+            document.getElementById('edit_email').value = c.email;
+            document.getElementById('edit_age').value = c.age;
+            document.getElementById('edit_height').value = c.height;
+            document.getElementById('edit_vital').value = c.vital_stats;
+            document.getElementById('edit_hometown').value = c.hometown;
+            document.getElementById('edit_motto').value = c.motto;
+            openModal('editModal');
+        }
 
-        function openEditModal(id) {
-            // Find data by ID safely
-            const data = contestantsData.find(c => c.detail_id == id);
-            
-            if (data) {
-                document.getElementById('edit_detail_id').value = data.detail_id;
-                document.getElementById('edit_name').value = data.name;
-                document.getElementById('edit_hometown').value = data.hometown || '';
-                document.getElementById('edit_vitals').value = data.vital_stats || '';
-                document.getElementById('edit_age').value = data.age || '';
-                document.getElementById('edit_height').value = data.height || '';
-                document.getElementById('edit_motto').value = data.motto || '';
-                document.getElementById('editModal').style.display = 'flex';
+        function togglePassword(inputId, icon) {
+            const input = document.getElementById(inputId);
+            if (input.type === "password") {
+                input.type = "text";
+                icon.classList.remove("fa-eye");
+                icon.classList.add("fa-eye-slash");
+            } else {
+                input.type = "password";
+                icon.classList.remove("fa-eye-slash");
+                icon.classList.add("fa-eye");
             }
         }
 
-        window.onclick = function(e) { if(e.target == document.getElementById('editModal')) document.getElementById('editModal').style.display = 'none'; }
+        // Toast Logic
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            const icon = type === 'success' ? '<i class="fas fa-check-circle"></i>' : '<i class="fas fa-exclamation-circle"></i>';
+            toast.innerHTML = `${icon} <span>${message}</span>`;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3500);
+        }
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('success')) showToast(urlParams.get('success'), 'success');
+        if (urlParams.has('error')) showToast(urlParams.get('error'), 'error');
+        if (urlParams.has('success') || urlParams.has('error')) {
+            const newUrl = window.location.pathname + (urlParams.has('view') ? '?view=' + urlParams.get('view') : '');
+            window.history.replaceState({}, document.title, newUrl);
+        }
     </script>
 </body>
 </html>

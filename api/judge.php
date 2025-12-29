@@ -38,6 +38,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $check->execute();
         $res = $check->get_result();
         
+        $is_new_account = false;
+
         if ($res->num_rows > 0) {
             $judge_id = $res->fetch_assoc()['id'];
         } else {
@@ -47,6 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $stmt->bind_param("isss", $creator, $name, $email, $hashed_pass);
             $stmt->execute();
             $judge_id = $conn->insert_id;
+            $is_new_account = true;
         }
 
         // B. Check Existing Link (Soft Deleted?)
@@ -56,15 +59,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $linkRes = $linkCheck->get_result();
         
         if ($linkRes->num_rows > 0) {
-            // RESTORE existing link
+            // RESTORE existing link (Set Active + Not Deleted)
             $link_id = $linkRes->fetch_assoc()['id'];
-            $update = $conn->prepare("UPDATE event_judges SET status='Active', is_chairman=? WHERE id=?");
+            $update = $conn->prepare("UPDATE event_judges SET status='Active', is_deleted=0, is_chairman=? WHERE id=?");
             $update->bind_param("ii", $is_chairman, $link_id);
             $update->execute();
             $msg = "Judge restored successfully";
         } else {
-            // CREATE new link
-            $insert = $conn->prepare("INSERT INTO event_judges (event_id, judge_id, is_chairman, status) VALUES (?, ?, ?, 'Active')");
+            // CREATE new link (Explicitly is_deleted=0)
+            $insert = $conn->prepare("INSERT INTO event_judges (event_id, judge_id, is_chairman, status, is_deleted) VALUES (?, ?, ?, 'Active', 0)");
             $insert->bind_param("iii", $event_id, $judge_id, $is_chairman);
             $insert->execute();
             $msg = "Judge added successfully";
@@ -76,7 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         require_once __DIR__ . '/../app/core/CustomMailer.php';
 
         // 1. Website Link
-        $site_link = "https://my-bpms-project.rf.gd/bpms/public/index.php";
+        $site_link = "http://YOUR-SUBDOMAIN.rf.gd/bpms/public/index.php"; // Update Link
 
         // 2. Get Event Name for the email
         $evt_name = "the Pageant";
@@ -87,27 +90,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
         // 3. Prepare Email
         $subject = "Official Invitation: Judge for $evt_name";
-        $body = "
-            <h2>Hello, $name!</h2>
-            <p>You have been selected to serve as an <b>Official Judge</b> for <b>$evt_name</b>.</p>
-            <p>We are honored to have you on our panel.</p>
-            
-            <div style='background:#f3f4f6; padding:15px; border-radius:8px; border:1px solid #ddd; margin:20px 0;'>
-                <strong>Your Login Credentials:</strong><br>
-                Email: <b>$email</b><br>
-                Password: <b>$pass</b>
-            </div>
+        
+        if ($is_new_account) {
+            $body = "
+                <h2>Hello, $name!</h2>
+                <p>You have been selected to serve as an <b>Official Judge</b> for <b>$evt_name</b>.</p>
+                
+                <div style='background:#f3f4f6; padding:15px; border-radius:8px; border:1px solid #ddd; margin:20px 0;'>
+                    <strong>Your Login Credentials:</strong><br>
+                    Email: <b>$email</b><br>
+                    Password: <b>$pass</b>
+                </div>
 
-            <p>Please login to the Judge's Dashboard to view the scoring criteria and candidates:</p>
-            <p>
-                <a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px; font-weight:bold;'>
-                    Open Judge Dashboard
-                </a>
-            </p>
-            <p style='font-size:12px; color:#666;'>Link: $site_link</p>
-            <br>
-            <p><i>- BPMS Organizing Committee</i></p>
-        ";
+                <p>Please login to the Judge's Dashboard to view the scoring criteria and candidates:</p>
+                <p><a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;'>Open Judge Dashboard</a></p>
+            ";
+        } else {
+            $body = "
+                <h2>Hello, $name!</h2>
+                <p>You have been selected to serve as an <b>Official Judge</b> for <b>$evt_name</b>.</p>
+                <p>Please login using your existing credentials.</p>
+                <p><a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;'>Open Judge Dashboard</a></p>
+            ";
+        }
 
         // 4. Send
         sendCustomEmail($email, $subject, $body);
@@ -170,22 +175,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
-// --- 3. REMOVE (Soft Delete) or RESTORE ---
+// --- 3. REMOVE / RESTORE / DELETE ---
 if (isset($_GET['action']) && isset($_GET['id'])) {
     $link_id = (int)$_GET['id'];
     $action  = $_GET['action']; 
 
-    $new_status = ($action === 'restore') ? 'Active' : 'Inactive';
-    
-    // If removing, we don't need to change chairman status (it just becomes an inactive chairman)
-    // If restoring, we might want to ensure they don't come back as a 2nd chairman, but for now let's keep it simple.
-    
-    $stmt = $conn->prepare("UPDATE event_judges SET status = ? WHERE id = ?");
-    $stmt->bind_param("si", $new_status, $link_id);
+    if ($action === 'delete') {
+        // --- SOFT DELETE: Hide from UI ---
+        $stmt = $conn->prepare("UPDATE event_judges SET is_deleted = 1 WHERE id = ?");
+        $stmt->bind_param("i", $link_id);
+        $view = 'archived';
+        $msg = "Judge permanently removed from list.";
+
+    } elseif ($action === 'restore') {
+        // --- RESTORE: Set Active & Visible ---
+        $stmt = $conn->prepare("UPDATE event_judges SET status = 'Active', is_deleted = 0 WHERE id = ?");
+        $stmt->bind_param("i", $link_id);
+        $view = 'archived';
+        $msg = "Judge restored successfully.";
+
+    } else {
+        // --- ARCHIVE (Default 'remove') ---
+        $stmt = $conn->prepare("UPDATE event_judges SET status = 'Inactive' WHERE id = ?");
+        $stmt->bind_param("i", $link_id);
+        $view = 'active';
+        $msg = "Judge archived.";
+    }
     
     if ($stmt->execute()) {
-        $view = ($action === 'remove') ? 'active' : 'archived'; 
-        header("Location: ../public/judges.php?view=$view&success=Judge status updated");
+        header("Location: ../public/judges.php?view=$view&success=" . urlencode($msg));
     } else {
         header("Location: ../public/judges.php?error=Action failed");
     }

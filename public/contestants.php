@@ -3,14 +3,12 @@ require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
 requireRole(['Event Manager', 'Contestant Manager']);
 require_once __DIR__ . '/../app/config/database.php';
-require_once __DIR__ . '/../app/models/Contestant.php'; // <--- 1. Import the Model
+require_once __DIR__ . '/../app/models/Contestant.php';
 
-// --- VIEW LOGIC ---
 $view = $_GET['view'] ?? 'active';
 $search = trim($_GET['search'] ?? '');
 $my_id = $_SESSION['user_id'];
 
-// Determine Status Filter based on View
 if ($view === 'pending') {
     $status_filter = 'Pending';
     $page_title = "Pending Applications";
@@ -22,13 +20,9 @@ if ($view === 'pending') {
     $page_title = "Official Candidates";
 }
 
-// --- FETCH DATA USING MODEL (Refactored) ---
-// 2. We removed the raw SQL block here.
-// 3. We now fetch data simply by asking the Model:
+// Model fetches data (filtering out is_deleted=1)
 $contestants = Contestant::getAllByManager($my_id, $status_filter, $search);
 
-// Fetch Events (for Modal)
-// (You could also move this to an Event model method later, e.g., Event::getActive($my_id))
 $evt_stmt = $conn->prepare("SELECT id, name FROM events WHERE user_id = ? AND status = 'Active'");
 $evt_stmt->bind_param("i", $my_id);
 $evt_stmt->execute();
@@ -43,112 +37,54 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     <link rel="stylesheet" href="./assets/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* Header & Actions */
         .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .header-actions { display: flex; gap: 10px; }
         
-        /* Buttons */
         .btn-add { background-color: #F59E0B; color: white; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 5px; }
-        .btn-add:hover { background-color: #d97706; }
-
         .btn-secondary { background-color: white; border: 1px solid #d1d5db; color: #374151; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600; transition: background 0.2s; }
         .btn-secondary:hover { background-color: #f3f4f6; }
 
-        /* Tabs */
         .tabs { display: flex; gap: 15px; margin-bottom: 20px; border-bottom: 2px solid #e5e7eb; padding-bottom: 0; }
         .tab-link { padding: 10px 15px; text-decoration: none; color: #6b7280; font-weight: 600; font-size: 14px; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: color 0.2s; }
-        .tab-link:hover { color: #1f2937; }
         .tab-link.active { border-bottom-color: #F59E0B; color: #F59E0B; }
 
-        /* SEARCH BAR STYLES */
-        .search-container {
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-        
-        .search-input {
-            padding: 10px;
-            border: 1px solid #d1d5db;
-            border-radius: 6px;
-            flex-grow: 1;
-            font-size: 14px;
-        }
+        .search-container { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; display: flex; gap: 10px; align-items: center; }
+        .search-input { padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; flex-grow: 1; font-size: 14px; }
+        .btn-search { background-color: #1f2937; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+        .btn-reset { color: #6b7280; text-decoration: none; font-size: 14px; padding: 0 10px; }
 
-        .btn-search {
-            background-color: #1f2937;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-        }
-        .btn-search:hover { background-color: #374151; }
-
-        .btn-reset {
-            color: #6b7280;
-            text-decoration: none;
-            font-size: 14px;
-            padding: 0 10px;
-        }
-        .btn-reset:hover { color: #1f2937; text-decoration: underline; }
-
-        /* --- COMPACT GRID DESIGN --- */
-        .contestant-grid { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); 
-            gap: 15px; 
-        }
-        
-        .contestant-card { 
-            background: white; 
-            border-radius: 8px; 
-            overflow: hidden; 
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1); 
-            display: flex; 
-            flex-direction: column; 
-            transition: transform 0.2s, box-shadow 0.2s; 
-        }
+        .contestant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 15px; }
+        .contestant-card { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; flex-direction: column; transition: transform 0.2s; }
         .contestant-card:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-        
         .card-img { width: 100%; height: 140px; object-fit: cover; background: #f3f4f6; }
-        
         .card-body { padding: 12px; flex-grow: 1; }
         .card-title { font-size: 15px; font-weight: bold; color: #1f2937; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .card-subtitle { font-size: 11px; color: #F59E0B; margin-bottom: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
-        
         .stats-row { display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; margin-bottom: 4px; border-bottom: 1px solid #f3f4f6; padding-bottom: 4px; }
         
-        .motto-text { 
-            font-style: italic; 
-            color: #9ca3af; 
-            font-size: 11px; 
-            margin-top: 6px; 
-            line-height: 1.3; 
-            height: 28px; 
-            overflow: hidden; 
-            display: -webkit-box; 
-            -webkit-line-clamp: 2; 
-            line-clamp: 2; 
-            -webkit-box-orient: vertical; 
-        }
-
-        .card-actions { padding: 8px 12px; background: #f9fafb; border-top: 1px solid #f3f4f6; display: flex; justify-content: center; gap: 8px; }
+        .card-actions { padding: 8px 12px; background: #f9fafb; border-top: 1px solid #f3f4f6; display: flex; justify-content: center; gap: 5px; }
         
-        .btn-sm { padding: 6px 10px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; text-decoration: none; border: none; flex: 1; text-align: center; transition: opacity 0.2s; }
-        .btn-sm:hover { opacity: 0.9; }
-
-        .btn-approve { background: #d1fae5; color: #059669; }
-        .btn-reject { background: #fee2e2; color: #dc2626; }
-        .btn-edit { background: #e0f2fe; color: #0284c7; }
-        .btn-remove { background: #fee2e2; color: #dc2626; }
-        .btn-restore { background: #d1fae5; color: #059669; }
+        /* Icon Buttons Styles */
+        .icon-btn { width: 32px; height: 32px; border-radius: 6px; border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all 0.2s; color: white; font-size: 13px; text-decoration: none; }
+        
+        .btn-view { background: #64748b; } /* Grey for View */
+        .btn-approve { background: #10b981; } /* Green */
+        .btn-reject { background: #ef4444; } /* Red */
+        
+        .btn-edit { background: #3b82f6; }
+        .btn-edit:hover { background: #2563eb; }
+        
+        .btn-reminder { background: #0ea5e9; }
+        .btn-reminder:hover { background: #0284c7; }
+        
+        .btn-reset { background: #f59e0b; }
+        .btn-reset:hover { background: #d97706; }
+        
+        .btn-archive { background: #f97316; } /* Archive/Remove */
+        .btn-archive:hover { background: #ea580c; }
+        
+        .btn-restore { background: #10b981; }
+        .btn-delete { background: #ef4444; } /* Soft Delete */
 
         /* Modal Styles */
         .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 1000; }
@@ -194,17 +130,14 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                 </div>
                 <?php else: ?>
                     <div style="margin-bottom: 20px; font-size: 14px; color: #6b7280;">
-                        Showing <strong>Archived (Removed)</strong> contestants. You can restore them if needed.
+                        Showing <strong>Archived</strong> contestants. Use restore to bring them back or delete to remove completely.
                     </div>
                 <?php endif; ?>
 
                 <form method="GET" action="contestants.php" class="search-container">
                     <input type="hidden" name="view" value="<?= htmlspecialchars($view) ?>">
-                    
                     <input type="text" name="search" class="search-input" placeholder="Search by name or hometown..." value="<?= htmlspecialchars($search) ?>">
-                    
                     <button type="submit" class="btn-search"><i class="fas fa-search"></i> Search</button>
-                    
                     <?php if (!empty($search)): ?>
                         <a href="contestants.php?view=<?= $view ?>" class="btn-reset">Reset</a>
                     <?php endif; ?>
@@ -219,7 +152,7 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                     <div class="contestant-grid">
                         <?php foreach ($contestants as $c): ?>
                             <div class="contestant-card">
-                                <img src="./assets/uploads/contestants/<?= htmlspecialchars($c['photo']) ?>" alt="Photo" class="card-img">
+                                <img src="./assets/uploads/contestants/<?= htmlspecialchars($c['photo']) ?>" alt="Photo" class="card-img" onerror="this.src='./assets/images/default_user.png'">
                                 
                                 <div class="card-body">
                                     <div class="card-title"><?= htmlspecialchars($c['name']) ?></div>
@@ -232,31 +165,52 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                                     <div class="stats-row">
                                         <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><?= htmlspecialchars($c['event_name']) ?></span>
                                     </div>
-
-                                    <?php if (!empty($c['motto'])): ?>
-                                        <div class="motto-text">"<?= htmlspecialchars($c['motto']) ?>"</div>
-                                    <?php endif; ?>
                                 </div>
 
                                 <div class="card-actions">
                                     <?php if ($view === 'pending'): ?>
-                                        <a href="../api/contestant.php?action=approve&id=<?= $c['id'] ?>" class="btn-sm btn-approve" onclick="return confirm('Approve this candidate?');">Approve</a>
-                                        <a href="../api/contestant.php?action=reject&id=<?= $c['id'] ?>" class="btn-sm btn-reject" onclick="return confirm('Reject this application?');">Reject</a>
+                                        <button class="icon-btn btn-view" onclick='openViewModal(<?= json_encode($c) ?>)' title="View Application Details">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                        <a href="../api/contestant.php?action=approve&id=<?= $c['id'] ?>" class="icon-btn btn-approve" onclick="return confirm('Approve this candidate?');" title="Approve">
+                                            <i class="fas fa-check"></i>
+                                        </a>
+                                        <a href="../api/contestant.php?action=reject&id=<?= $c['id'] ?>" class="icon-btn btn-reject" onclick="return confirm('Reject this application?');" title="Reject">
+                                            <i class="fas fa-times"></i>
+                                        </a>
                                     
                                     <?php elseif ($view === 'archived'): ?>
-                                        <a href="../api/contestant.php?action=restore&id=<?= $c['id'] ?>" class="btn-sm btn-restore" onclick="return confirm('Restore this contestant?');">Restore</a>
+                                        <a href="../api/contestant.php?action=restore&id=<?= $c['id'] ?>" class="icon-btn btn-restore" onclick="return confirm('Restore this contestant?');" title="Restore">
+                                            <i class="fas fa-undo"></i>
+                                        </a>
+                                        <a href="../api/contestant.php?action=delete&id=<?= $c['id'] ?>" class="icon-btn btn-delete" onclick="return confirm('PERMANENTLY REMOVE?\n\nThey will disappear from the list completely.');" title="Delete Permanently">
+                                            <i class="fas fa-trash"></i>
+                                        </a>
                                     
                                     <?php else: ?>
-                                        <button class="btn-sm btn-edit" onclick='openEditModal(<?= json_encode($c) ?>)'>Edit</button>
-                                        <a href="../api/contestant.php?action=remove&id=<?= $c['id'] ?>" class="btn-sm btn-remove" onclick="return confirm('Remove this contestant?');">Remove</a>
-
-                                        <form action="../api/resend_email.php" method="POST" style="display:inline;" onsubmit="return confirm('This will RESET the password and email it to the contestant. Proceed?');">
+                                        <button class="icon-btn btn-edit" onclick='openEditModal(<?= json_encode($c) ?>)' title="Edit Details">
+                                            <i class="fas fa-pen"></i>
+                                        </button>
+                                        
+                                        <form action="../api/resend_email.php" method="POST" style="margin:0;" onsubmit="return confirm('Send reminder email?');">
                                             <input type="hidden" name="user_id" value="<?= $c['id'] ?>">
-                                            <input type="hidden" name="role_type" value="Contestant">
-                                            <button type="submit" class="btn-sm" style="background-color: #3b82f6; color: white; border: none; cursor: pointer;" title="Resend Invite & Reset Password">
-                                            <i class="fas fa-envelope"></i>
+                                            <input type="hidden" name="action_type" value="reminder">
+                                            <button type="submit" class="icon-btn btn-reminder" title="Send Login Reminder">
+                                                <i class="fas fa-paper-plane"></i>
                                             </button>
                                         </form>
+
+                                        <form action="../api/resend_email.php" method="POST" style="margin:0;" onsubmit="return confirm('RESET password and email it?');">
+                                            <input type="hidden" name="user_id" value="<?= $c['id'] ?>">
+                                            <input type="hidden" name="action_type" value="reset">
+                                            <button type="submit" class="icon-btn btn-reset" title="Reset Password">
+                                                <i class="fas fa-key"></i>
+                                            </button>
+                                        </form>
+
+                                        <a href="../api/contestant.php?action=remove&id=<?= $c['id'] ?>" class="icon-btn btn-archive" onclick="return confirm('Archive this contestant?');" title="Archive">
+                                            <i class="fas fa-archive"></i>
+                                        </a>
                                     <?php endif; ?>
                                 </div>
                             </div>
@@ -273,75 +227,33 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
             <h3>Add New Contestant</h3>
             <form action="../api/contestant.php" method="POST" enctype="multipart/form-data">
                 <input type="hidden" name="action" value="create">
-                
-                <div class="form-group">
-                    <label>Event</label>
-                    <select name="event_id" class="form-control" required>
-                        <?php foreach ($my_events as $evt): ?>
-                            <option value="<?= $evt['id'] ?>"><?= htmlspecialchars($evt['name']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="form-row">
-                    <div class="form-group"><label>Name</label><input type="text" name="name" class="form-control" placeholder="e.g. Maria Clara" required></div>
-                    <div class="form-group"><label>Age</label><input type="number" name="age" class="form-control" placeholder="e.g. 21" required></div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group"><label>Email</label><input type="email" name="email" class="form-control" placeholder="contestant@email.com" required></div>
-                    <div class="form-group"><label>Password</label>
-                        <input type="password" name="password" id="addPass" class="form-control" placeholder="Enter password" required>
-                        <i class="fas fa-eye toggle-password" onclick="togglePassword('addPass', this)"></i>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group"><label>Height</label><input type="text" name="height" class="form-control" placeholder="e.g. 170cm"></div>
-                    <div class="form-group"><label>Vital Stats</label><input type="text" name="vital_stats" class="form-control" placeholder="e.g. 34-24-36"></div>
-                </div>
-                <div class="form-group"><label>Hometown</label><input type="text" name="hometown" class="form-control" placeholder="e.g. Catarman" required></div>
-                <div class="form-group"><label>Motto</label><input type="text" name="motto" class="form-control" placeholder="Short phrase describing the contestant..."></div>
+                <div class="form-group"><label>Event</label><select name="event_id" class="form-control" required><?php foreach ($my_events as $evt): ?><option value="<?= $evt['id'] ?>"><?= htmlspecialchars($evt['name']) ?></option><?php endforeach; ?></select></div>
+                <div class="form-row"><div class="form-group"><label>Name</label><input type="text" name="name" class="form-control" required></div><div class="form-group"><label>Age</label><input type="number" name="age" class="form-control" required></div></div>
+                <div class="form-row"><div class="form-group"><label>Email</label><input type="email" name="email" class="form-control" required></div><div class="form-group"><label>Password</label><input type="password" name="password" class="form-control" required></div></div>
+                <div class="form-row"><div class="form-group"><label>Height</label><input type="text" name="height" class="form-control"></div><div class="form-group"><label>Vital Stats</label><input type="text" name="vital_stats" class="form-control"></div></div>
+                <div class="form-group"><label>Hometown</label><input type="text" name="hometown" class="form-control" required></div>
+                <div class="form-group"><label>Motto</label><input type="text" name="motto" class="form-control"></div>
                 <div class="form-group"><label>Photo</label><input type="file" name="photo" class="form-control" accept="image/*" required></div>
-                
-                <div style="text-align:right; margin-top:15px;">
-                    <button type="button" onclick="closeModal('addModal')" style="padding:8px 15px; border:none; background:#e5e7eb; border-radius:4px; cursor:pointer;">Cancel</button>
-                    <button type="submit" style="padding:8px 15px; border:none; background:#F59E0B; color:white; border-radius:4px; font-weight:bold; cursor:pointer;">Save</button>
-                </div>
+                <div style="text-align:right;"><button type="button" onclick="closeModal('addModal')" style="padding:8px 15px; border:none; background:#e5e7eb; border-radius:4px; cursor:pointer;">Cancel</button> <button type="submit" style="padding:8px 15px; border:none; background:#F59E0B; color:white; border-radius:4px; font-weight:bold; cursor:pointer;">Save</button></div>
             </form>
         </div>
     </div>
 
     <div id="editModal" class="modal-overlay">
         <div class="modal-content">
-            <h3>Edit Contestant</h3>
+            <h3 id="modalTitle">Edit Contestant</h3>
             <form action="../api/contestant.php" method="POST" enctype="multipart/form-data">
                 <input type="hidden" name="action" value="update">
                 <input type="hidden" name="contestant_id" id="edit_id">
-                <div class="form-group">
-                    <label>Event</label>
-                    <select name="event_id" id="edit_event_id" class="form-control" required>
-                        <?php foreach ($my_events as $evt): ?>
-                            <option value="<?= $evt['id'] ?>"><?= htmlspecialchars($evt['name']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="form-row">
-                    <div class="form-group"><label>Name</label><input type="text" name="name" id="edit_name" class="form-control" placeholder="e.g. Maria Clara" required></div>
-                    <div class="form-group"><label>Age</label><input type="number" name="age" id="edit_age" class="form-control" placeholder="e.g. 21" required></div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group"><label>Email</label><input type="email" name="email" id="edit_email" class="form-control" placeholder="name@example.com" required></div>
-                    <div class="form-group"><label>Change Password</label>
-                        <input type="password" name="password" id="editPass" class="form-control" placeholder="Enter strong password">
-                        <i class="fas fa-eye toggle-password" onclick="togglePassword('editPass', this)"></i>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group"><label>Height</label><input type="text" name="height" id="edit_height" class="form-control" placeholder="e.g. 170cm"></div>
-                    <div class="form-group"><label>Vital Stats</label><input type="text" name="vital_stats" id="edit_vital" class="form-control" placeholder="e.g. 34-24-36"></div>
-                </div>
-                <div class="form-group"><label>Hometown</label><input type="text" name="hometown" id="edit_hometown" class="form-control" placeholder="e.g. Catarman" required></div>
-                <div class="form-group"><label>Motto</label><input type="text" name="motto" id="edit_motto" class="form-control" placeholder="Short phrase..."></div>
-                <div class="form-group"><label>Update Photo (Optional)</label><input type="file" name="photo" class="form-control" accept="image/*"></div>
-                <div style="text-align:right; margin-top:15px;">
+                <div class="form-group"><label>Event</label><select name="event_id" id="edit_event_id" class="form-control" required><?php foreach ($my_events as $evt): ?><option value="<?= $evt['id'] ?>"><?= htmlspecialchars($evt['name']) ?></option><?php endforeach; ?></select></div>
+                <div class="form-row"><div class="form-group"><label>Name</label><input type="text" name="name" id="edit_name" class="form-control" required></div><div class="form-group"><label>Age</label><input type="number" name="age" id="edit_age" class="form-control" required></div></div>
+                <div class="form-row"><div class="form-group"><label>Email</label><input type="email" name="email" id="edit_email" class="form-control" required></div><div class="form-group"><label>Change Password</label><input type="password" name="password" id="editPass" class="form-control" placeholder="Optional"></div></div>
+                <div class="form-row"><div class="form-group"><label>Height</label><input type="text" name="height" id="edit_height" class="form-control"></div><div class="form-group"><label>Vital Stats</label><input type="text" name="vital_stats" id="edit_vital" class="form-control"></div></div>
+                <div class="form-group"><label>Hometown</label><input type="text" name="hometown" id="edit_hometown" class="form-control" required></div>
+                <div class="form-group"><label>Motto</label><input type="text" name="motto" id="edit_motto" class="form-control"></div>
+                <div class="form-group" id="photoGroup"><label>Update Photo</label><input type="file" name="photo" class="form-control" accept="image/*"></div>
+                
+                <div style="text-align:right; margin-top:15px;" id="modalActions">
                     <button type="button" onclick="closeModal('editModal')" style="padding:8px 15px; border:none; background:#e5e7eb; border-radius:4px; cursor:pointer;">Cancel</button>
                     <button type="submit" style="padding:8px 15px; border:none; background:#F59E0B; color:white; border-radius:4px; font-weight:bold; cursor:pointer;">Save Changes</button>
                 </div>
@@ -353,7 +265,7 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         function openModal(id) { document.getElementById(id).style.display = 'flex'; }
         function closeModal(id) { document.getElementById(id).style.display = 'none'; }
         
-        function openEditModal(c) {
+        function populateModal(c) {
             document.getElementById('edit_id').value = c.id;
             document.getElementById('edit_event_id').value = c.event_id;
             document.getElementById('edit_name').value = c.name;
@@ -366,17 +278,32 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
             openModal('editModal');
         }
 
-        function togglePassword(inputId, icon) {
-            const input = document.getElementById(inputId);
-            if (input.type === "password") {
-                input.type = "text";
-                icon.classList.remove("fa-eye");
-                icon.classList.add("fa-eye-slash");
-            } else {
-                input.type = "password";
-                icon.classList.remove("fa-eye-slash");
-                icon.classList.add("fa-eye");
-            }
+        // Mode: Edit (Normal)
+        function openEditModal(c) {
+            document.getElementById('modalTitle').innerText = "Edit Contestant";
+            document.getElementById('photoGroup').style.display = 'block';
+            document.getElementById('modalActions').style.display = 'block';
+            
+            // Enable fields
+            const inputs = document.querySelectorAll('#editModal input, #editModal select');
+            inputs.forEach(i => i.disabled = false);
+            
+            populateModal(c);
+        }
+
+        // Mode: View (Read Only)
+        function openViewModal(c) {
+            populateModal(c);
+            document.getElementById('modalTitle').innerText = "Application Details";
+            document.getElementById('photoGroup').style.display = 'none'; // Hide upload in view mode
+            
+            // Disable all fields
+            const inputs = document.querySelectorAll('#editModal input, #editModal select');
+            inputs.forEach(i => i.disabled = true);
+
+            // Hide Save button
+            document.getElementById('modalActions').innerHTML = 
+                `<button type="button" onclick="closeModal('editModal')" style="padding:8px 15px; border:none; background:#e5e7eb; border-radius:4px; cursor:pointer;">Close</button>`;
         }
 
         // Toast

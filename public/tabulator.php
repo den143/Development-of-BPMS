@@ -183,7 +183,11 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
             <ul class="sidebar-menu">
                 <li><a href="tabulator.php" class="active"><i class="fas fa-calculator"></i> <span>Score Sheet</span></a></li>
             </ul>
+            
             <div class="sidebar-footer">
+                <a href="settings.php">
+                    <i class="fas fa-cog"></i> <span>Settings</span>
+                </a>
                 <a href="logout.php" onclick="return confirm('Confirm Logout?');">
                     <i class="fas fa-sign-out-alt"></i> <span>Logout</span>
                 </a>

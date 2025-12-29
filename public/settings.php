@@ -1,42 +1,68 @@
 <?php
 require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
-requireRole(['Event Manager', 'Tabulator']);
 
 require_once __DIR__ . '/../app/models/Event.php';
 require_once __DIR__ . '/../app/config/database.php';
 
 $u_id = $_SESSION['user_id'];
-$active_tab = $_GET['tab'] ?? 'event_details'; // Default tab
+$role = $_SESSION['role'] ?? '';
 
-// --- 1. FETCH ACTIVE EVENT ---
-$active_evt_query = $conn->prepare("SELECT * FROM events WHERE user_id = ? AND status = 'Active' AND is_deleted = 0 LIMIT 1");
-$active_evt_query->bind_param("i", $u_id);
-$active_evt_query->execute();
-$active_event = $active_evt_query->get_result()->fetch_assoc();
+// --- ROLE CHECK: Who is allowed to manage the Event? ---
+$is_event_manager = ($role === 'Event Manager');
 
-// --- 2. FETCH TICKET DATA ---
+// --- DETERMINE ACTIVE TAB ---
+// If not admin, force them to 'account' tab
+$default_tab = $is_event_manager ? 'event_details' : 'account';
+$active_tab = $_GET['tab'] ?? $default_tab;
+
+// If a non-admin tries to access admin tabs via URL, force them back
+if (!$is_event_manager && $active_tab !== 'account') {
+    $active_tab = 'account';
+}
+
+// --- 1. FETCH ACTIVE EVENT (Only for Managers) ---
+$active_event = null;
 $tickets = [];
 $total_unused = 0;
 $total_used = 0;
+$all_events = [];
 
-if ($active_event) {
-    $event_id = $active_event['id'];
-    
-    // Stats
-    $res = $conn->query("SELECT status, COUNT(*) as count FROM tickets WHERE event_id = $event_id GROUP BY status");
-    while($row = $res->fetch_assoc()) {
-        if ($row['status'] == 'Unused') $total_unused = $row['count'];
-        if ($row['status'] == 'Used') $total_used = $row['count'];
+if ($is_event_manager) {
+    $active_evt_query = $conn->prepare("SELECT * FROM events WHERE user_id = ? AND status = 'Active' AND is_deleted = 0 LIMIT 1");
+    $active_evt_query->bind_param("i", $u_id);
+    $active_evt_query->execute();
+    $active_event = $active_evt_query->get_result()->fetch_assoc();
+
+    // --- 2. FETCH TICKET DATA ---
+    if ($active_event) {
+        $event_id = $active_event['id'];
+        
+        // Stats
+        $res = $conn->query("SELECT status, COUNT(*) as count FROM tickets WHERE event_id = $event_id GROUP BY status");
+        while($row = $res->fetch_assoc()) {
+            if ($row['status'] == 'Unused') $total_unused = $row['count'];
+            if ($row['status'] == 'Used') $total_used = $row['count'];
+        }
+        // List
+        $tickets = $conn->query("SELECT * FROM tickets WHERE event_id = $event_id ORDER BY created_at DESC LIMIT 100")->fetch_all(MYSQLI_ASSOC);
     }
 
-    // List (Limit 100)
-    $tickets = $conn->query("SELECT * FROM tickets WHERE event_id = $event_id ORDER BY created_at DESC LIMIT 100")->fetch_all(MYSQLI_ASSOC);
+    // Fetch History
+    $hist_stmt = $conn->prepare("SELECT * FROM events WHERE user_id = ? AND is_deleted = 0 ORDER BY created_at DESC");
+    $hist_stmt->bind_param("i", $u_id);
+    $hist_stmt->execute();
+    $all_events = $hist_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 }
 
 // --- 3. HANDLE FORM SUBMISSIONS ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
+    // SECURITY: Block non-admins from event actions
+    if (!$is_event_manager && (isset($_POST['update_event_details']) || isset($_POST['switch_event']) || isset($_POST['remove_event']))) {
+        die("Unauthorized Action");
+    }
+
     // A. UPDATE ACTIVE EVENT DETAILS
     if (isset($_POST['update_event_details'])) {
         $eid = (int)$_POST['event_id'];
@@ -56,7 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit();
     }
 
-    // B. UPDATE MY ACCOUNT
+    // B. UPDATE MY ACCOUNT (Available to EVERYONE)
     if (isset($_POST['update_profile'])) {
         $name = trim($_POST['my_name']);
         $current_pass = $_POST['current_password'];
@@ -92,7 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit();
     }
 
-    // C. SWITCH EVENT (SECURE)
+    // C. SWITCH EVENT
     if (isset($_POST['switch_event'])) {
         $target_id = (int)$_POST['event_id'];
         $password_check = $_POST['password_check'];
@@ -124,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // D. REMOVE EVENT (SECURE + PASSWORD CHECK)
+    // D. REMOVE EVENT
     if (isset($_POST['remove_event'])) {
         $target_id = (int)$_POST['event_id'];
         $password_check = $_POST['password_check'];
@@ -158,12 +184,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit();
     }
 }
-
-// Fetch All Events for History Tab (Excluding Deleted)
-$hist_stmt = $conn->prepare("SELECT * FROM events WHERE user_id = ? AND is_deleted = 0 ORDER BY created_at DESC");
-$hist_stmt->bind_param("i", $u_id);
-$hist_stmt->execute();
-$all_events = $hist_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
 // Fetch My Profile Data
 $me_stmt = $conn->prepare("SELECT name, email FROM users WHERE id = ?");
@@ -221,14 +241,13 @@ $me = $me_stmt->get_result()->fetch_assoc();
         .card-header h3 { font-size: 18px; color: #111827; margin:0; }
         .card-header p { font-size: 13px; color: #6b7280; margin-top: 5px; margin-bottom:0; }
 
-        /* FORMS */
         .form-group { margin-bottom: 20px; position: relative; }
         .form-label { display: block; margin-bottom: 8px; font-weight: 600; color: #374151; font-size: 13px; }
         .form-control { width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
         .btn-save { background-color: #F59E0B; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; }
         .btn-save:hover { background-color: #d97706; }
 
-        /* HISTORY TABLE REUSE */
+        /* Tables & Badges */
         .data-table { width: 100%; border-collapse: collapse; }
         .data-table th, .data-table td { padding: 15px; text-align: left; border-bottom: 1px solid #f3f4f6; }
         .data-table th { background: #f9fafb; font-size: 12px; text-transform: uppercase; color: #6b7280; }
@@ -236,12 +255,12 @@ $me = $me_stmt->get_result()->fetch_assoc();
         .badge-active { background: #d1fae5; color: #065f46; }
         .badge-inactive { background: #f3f4f6; color: #6b7280; }
         
-        /* --- TICKET SPECIFIC STYLES --- */
+        /* Stats & Buttons */
         .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
         .stat-box { background: #f9fafb; padding: 15px; border-radius: 6px; text-align: center; border: 1px solid #e5e7eb; }
         .stat-num { font-size: 24px; font-weight: bold; color: #1f2937; }
         .stat-label { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }
-
+        
         .ticket-table { width: 100%; border-collapse: collapse; font-size: 14px; }
         .ticket-table th { background: #f3f4f6; padding: 10px; text-align: left; color: #6b7280; font-size: 12px; }
         .ticket-table td { padding: 10px; border-bottom: 1px solid #f3f4f6; font-family: 'Courier New', monospace; font-weight: bold; }
@@ -252,25 +271,19 @@ $me = $me_stmt->get_result()->fetch_assoc();
         .btn-print { background: #4b5563; color: white; text-decoration: none; padding: 8px 15px; border-radius: 6px; font-size: 13px; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; border: none; }
         .btn-clear { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 
-        /* LOADING & UTILS */
-        /* FIX: INCREASED Z-INDEX to 9999 so it sits ABOVE modals */
         .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); display: none; justify-content: center; align-items: center; z-index: 9999; flex-direction: column; color: white; }
         .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #F59E0B; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .toggle-password { position: absolute; right: 10px; top: 35px; cursor: pointer; color: #9ca3af; }
 
-        /* REPORT CARD STYLES */
         .report-item { display: flex; align-items: center; gap: 20px; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 15px; transition: 0.2s; }
         .report-item:hover { border-color: #bfa5a5; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
         .report-icon { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; }
         .icon-pdf { background: #eff6ff; color: #3b82f6; }
-        .icon-danger { background: #fef2f2; color: #ef4444; }
         .btn-report { background: #0f172a; color: white; text-decoration: none; padding: 10px 20px; border-radius: 6px; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
         .btn-report:hover { background: #1e293b; }
-        .btn-danger-outline { background: white; border: 1px solid #fca5a5; color: #dc2626; padding: 10px 20px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
-        .btn-danger-outline:hover { background: #fef2f2; }
 
-        /* MODAL STYLES */
+        /* Modal Styles */
         .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; justify-content: center; align-items: center; z-index: 2000; }
         .modal-content { background: white; padding: 25px; width: 400px; border-radius: 12px; position: relative; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
         .modal-title { margin-top: 0; margin-bottom: 15px; font-size: 18px; color: #111827; }
@@ -302,18 +315,21 @@ $me = $me_stmt->get_result()->fetch_assoc();
                 <div class="settings-container">
                     
                     <div class="settings-sidebar">
-                        <a href="?tab=event_details" class="tab-btn <?= $active_tab == 'event_details' ? 'active' : '' ?>">
-                            <i class="fas fa-sliders-h"></i> Event Configuration
-                        </a>
-                        <a href="?tab=tickets" class="tab-btn <?= $active_tab == 'tickets' ? 'active' : '' ?>">
-                            <i class="fas fa-ticket-alt"></i> Audience Tickets
-                        </a>
-                        <a href="?tab=reports" class="tab-btn <?= $active_tab == 'reports' ? 'active' : '' ?>">
-                            <i class="fas fa-file-invoice"></i> Reports & Exports
-                        </a>
-                        <a href="?tab=history" class="tab-btn <?= $active_tab == 'history' ? 'active' : '' ?>">
-                            <i class="fas fa-history"></i> Switch Event
-                        </a>
+                        <?php if ($is_event_manager): ?>
+                            <a href="?tab=event_details" class="tab-btn <?= $active_tab == 'event_details' ? 'active' : '' ?>">
+                                <i class="fas fa-sliders-h"></i> Event Configuration
+                            </a>
+                            <a href="?tab=tickets" class="tab-btn <?= $active_tab == 'tickets' ? 'active' : '' ?>">
+                                <i class="fas fa-ticket-alt"></i> Audience Tickets
+                            </a>
+                            <a href="?tab=reports" class="tab-btn <?= $active_tab == 'reports' ? 'active' : '' ?>">
+                                <i class="fas fa-file-invoice"></i> Reports & Exports
+                            </a>
+                            <a href="?tab=history" class="tab-btn <?= $active_tab == 'history' ? 'active' : '' ?>">
+                                <i class="fas fa-history"></i> Switch Event
+                            </a>
+                        <?php endif; ?>
+                        
                         <a href="?tab=account" class="tab-btn <?= $active_tab == 'account' ? 'active' : '' ?>">
                             <i class="fas fa-user-cog"></i> Account Settings
                         </a>
@@ -321,178 +337,156 @@ $me = $me_stmt->get_result()->fetch_assoc();
 
                     <div class="settings-content">
                         
-                        <div class="card <?= $active_tab == 'event_details' ? 'active' : '' ?>">
-                            <div class="card-header">
-                                <div>
-                                    <h3>Current Event Configuration</h3>
-                                    <p>Edit details for the currently active event.</p>
+                        <?php if ($is_event_manager): ?>
+                            <div class="card <?= $active_tab == 'event_details' ? 'active' : '' ?>">
+                                <div class="card-header">
+                                    <div>
+                                        <h3>Current Event Configuration</h3>
+                                        <p>Edit details for the currently active event.</p>
+                                    </div>
                                 </div>
-                            </div>
-
-                            <?php if (!$active_event): ?>
-                                <div style="text-align:center; padding:20px; color:#9ca3af;">
-                                    <i class="fas fa-exclamation-circle"></i> No active event selected. Go to "Switch Event" to create or select one.
-                                </div>
-                            <?php else: ?>
-                                <form method="POST" onsubmit="showLoading()">
-                                    <input type="hidden" name="event_id" value="<?= $active_event['id'] ?>">
-                                    <div class="form-group">
-                                        <label class="form-label">Event Name</label>
-                                        <input type="text" name="event_name" class="form-control" value="<?= htmlspecialchars($active_event['name']) ?>" required>
+                                <?php if (!$active_event): ?>
+                                    <div style="text-align:center; padding:20px; color:#9ca3af;">
+                                        <i class="fas fa-exclamation-circle"></i> No active event selected.
                                     </div>
-                                    <div class="form-group">
-                                        <label class="form-label">Event Date</label>
-                                        <input type="date" name="event_date" class="form-control" value="<?= htmlspecialchars($active_event['event_date']) ?>" required>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">Venue</label>
-                                        <input type="text" name="venue" class="form-control" value="<?= htmlspecialchars($active_event['venue']) ?>" required>
-                                    </div>
-                                    <div style="text-align:right;">
-                                        <button type="submit" name="update_event_details" class="btn-save">Save Changes</button>
-                                    </div>
-                                </form>
-                            <?php endif; ?>
-                        </div>
-
-                        <div class="card <?= $active_tab == 'tickets' ? 'active' : '' ?>">
-                            <div class="card-header">
-                                <div>
-                                    <h3>Audience Voting Tickets</h3>
-                                    <p>Generate unique codes for "People's Choice" voting.</p>
-                                </div>
-                                <?php if ($active_event): ?>
-                                <button class="btn-print" onclick="printTickets()"><i class="fas fa-print"></i> Print List</button>
+                                <?php else: ?>
+                                    <form method="POST" onsubmit="showLoading()">
+                                        <input type="hidden" name="event_id" value="<?= $active_event['id'] ?>">
+                                        <div class="form-group">
+                                            <label class="form-label">Event Name</label>
+                                            <input type="text" name="event_name" class="form-control" value="<?= htmlspecialchars($active_event['name']) ?>" required>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-label">Event Date</label>
+                                            <input type="date" name="event_date" class="form-control" value="<?= htmlspecialchars($active_event['event_date']) ?>" required>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-label">Venue</label>
+                                            <input type="text" name="venue" class="form-control" value="<?= htmlspecialchars($active_event['venue']) ?>" required>
+                                        </div>
+                                        <div style="text-align:right;">
+                                            <button type="submit" name="update_event_details" class="btn-save">Save Changes</button>
+                                        </div>
+                                    </form>
                                 <?php endif; ?>
                             </div>
-                            <?php if (!$active_event): ?>
-                                <div style="text-align:center; padding:20px; color:#9ca3af;">
-                                    <i class="fas fa-exclamation-circle"></i> No active event selected.
-                                </div>
-                            <?php else: ?>
-                                <div class="stats-grid">
-                                    <div class="stat-box">
-                                        <div class="stat-num" style="color:#059669;"><?= $total_unused ?></div>
-                                        <div class="stat-label">Available Tickets</div>
+
+                            <div class="card <?= $active_tab == 'tickets' ? 'active' : '' ?>">
+                                <div class="card-header">
+                                    <div>
+                                        <h3>Audience Voting Tickets</h3>
+                                        <p>Generate unique codes for "People's Choice" voting.</p>
                                     </div>
-                                    <div class="stat-box">
-                                        <div class="stat-num" style="color:#dc2626;"><?= $total_used ?></div>
-                                        <div class="stat-label">Votes Cast (Used)</div>
-                                    </div>
+                                    <?php if ($active_event): ?>
+                                    <button class="btn-print" onclick="printTickets()"><i class="fas fa-print"></i> Print List</button>
+                                    <?php endif; ?>
                                 </div>
-                                <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:20px; background:#f9fafb; padding:15px; border-radius:8px; flex-wrap:wrap;">
-                                    <form action="../api/tickets.php" method="POST" style="display:flex; gap:10px; align-items:flex-end; flex:1;" onsubmit="showLoading()">
-                                        <input type="hidden" name="action" value="generate">
-                                        <input type="hidden" name="event_id" value="<?= $active_event['id'] ?>">
-                                        <div style="flex:1; max-width:200px;">
-                                            <label style="display:block; font-size:13px; margin-bottom:5px; color:#4b5563;">Generate Quantity</label>
-                                            <input type="number" name="quantity" class="form-control" value="50" min="1" max="500">
+                                <?php if (!$active_event): ?>
+                                    <div style="text-align:center; padding:20px; color:#9ca3af;">
+                                        <i class="fas fa-exclamation-circle"></i> No active event selected.
+                                    </div>
+                                <?php else: ?>
+                                    <div class="stats-grid">
+                                        <div class="stat-box">
+                                            <div class="stat-num" style="color:#059669;"><?= $total_unused ?></div>
+                                            <div class="stat-label">Available Tickets</div>
                                         </div>
-                                        <button type="submit" class="btn-generate">Generate Codes</button>
-                                    </form>
-                                    <div style="margin-left:auto;">
-                                        <form action="../api/tickets.php" method="POST" onsubmit="if(confirm('Are you sure? This will delete all UNUSED tickets.')){ showLoading(); return true; } else { return false; }">
-                                            <input type="hidden" name="action" value="clear_unused">
+                                        <div class="stat-box">
+                                            <div class="stat-num" style="color:#dc2626;"><?= $total_used ?></div>
+                                            <div class="stat-label">Votes Cast (Used)</div>
+                                        </div>
+                                    </div>
+                                    <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:20px; background:#f9fafb; padding:15px; border-radius:8px; flex-wrap:wrap;">
+                                        <form action="../api/tickets.php" method="POST" style="display:flex; gap:10px; align-items:flex-end; flex:1;" onsubmit="showLoading()">
+                                            <input type="hidden" name="action" value="generate">
                                             <input type="hidden" name="event_id" value="<?= $active_event['id'] ?>">
-                                            <button type="submit" class="btn-clear"><i class="fas fa-trash"></i> Clear Unused</button>
+                                            <div style="flex:1; max-width:200px;">
+                                                <label style="display:block; font-size:13px; margin-bottom:5px; color:#4b5563;">Generate Quantity</label>
+                                                <input type="number" name="quantity" class="form-control" value="50" min="1" max="500">
+                                            </div>
+                                            <button type="submit" class="btn-generate">Generate Codes</button>
                                         </form>
+                                        <div style="margin-left:auto;">
+                                            <form action="../api/tickets.php" method="POST" onsubmit="if(confirm('Are you sure? This will delete all UNUSED tickets.')){ showLoading(); return true; } else { return false; }">
+                                                <input type="hidden" name="action" value="clear_unused">
+                                                <input type="hidden" name="event_id" value="<?= $active_event['id'] ?>">
+                                                <button type="submit" class="btn-clear"><i class="fas fa-trash"></i> Clear Unused</button>
+                                            </form>
+                                        </div>
                                     </div>
-                                </div>
-                                <div style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px;">
-                                    <table class="ticket-table" id="printableTable">
-                                        <thead>
-                                            <tr>
-                                                <th>#</th>
-                                                <th>Ticket Code</th>
-                                                <th>Status</th>
-                                                <th>Generated Date</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php if (empty($tickets)): ?>
-                                                <tr><td colspan="4" style="text-align:center; padding:20px;">No tickets generated yet.</td></tr>
-                                            <?php else: ?>
-                                                <?php foreach ($tickets as $index => $t): ?>
-                                                    <tr>
-                                                        <td style="color:#9ca3af; font-family:sans-serif;"><?= $index + 1 ?></td>
-                                                        <td style="font-size:16px; letter-spacing:1px;"><?= htmlspecialchars($t['code']) ?></td>
-                                                        <td><span class="<?= ($t['status'] == 'Used') ? 'status-used' : 'status-unused' ?>"><?= $t['status'] ?></span></td>
-                                                        <td style="font-family:sans-serif; font-weight:normal; font-size:12px; color:#6b7280;"><?= date('M d, Y h:i A', strtotime($t['created_at'])) ?></td>
-                                                    </tr>
-                                                <?php endforeach; ?>
-                                            <?php endif; ?>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            <?php endif; ?>
-                        </div>
-
-                        <div class="card <?= $active_tab == 'reports' ? 'active' : '' ?>">
-                            <div class="card-header">
-                                <div>
-                                    <h3>Event Reports & Exports</h3>
-                                    <p>Generate official documents and manage event data.</p>
-                                </div>
-                            </div>
-                            <?php if (!$active_event): ?>
-                                <div style="text-align:center; padding:20px; color:#9ca3af;"><i class="fas fa-exclamation-circle"></i> No active event selected.</div>
-                            <?php else: ?>
-                                <div class="report-item">
-                                    <div class="report-icon icon-pdf"><i class="fas fa-file-pdf"></i></div>
-                                    <div style="flex:1;">
-                                        <h4 style="margin:0; font-size:16px; color:#1e293b;">Official Tabulation Report</h4>
-                                        <p style="margin:5px 0 0; font-size:13px; color:#64748b;">Download the complete post-event report.</p>
+                                    <div style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px;">
+                                        <table class="ticket-table" id="printableTable">
+                                            <thead>
+                                                <tr><th>#</th><th>Ticket Code</th><th>Status</th><th>Generated Date</th></tr>
+                                            </thead>
+                                            <tbody>
+                                                <?php if (empty($tickets)): ?>
+                                                    <tr><td colspan="4" style="text-align:center; padding:20px;">No tickets generated yet.</td></tr>
+                                                <?php else: ?>
+                                                    <?php foreach ($tickets as $index => $t): ?>
+                                                        <tr>
+                                                            <td style="color:#9ca3af;"><?= $index + 1 ?></td>
+                                                            <td style="font-size:16px; letter-spacing:1px;"><?= htmlspecialchars($t['code']) ?></td>
+                                                            <td><span class="<?= ($t['status'] == 'Used') ? 'status-used' : 'status-unused' ?>"><?= $t['status'] ?></span></td>
+                                                            <td style="color:#6b7280;"><?= date('M d, Y h:i A', strtotime($t['created_at'])) ?></td>
+                                                        </tr>
+                                                    <?php endforeach; ?>
+                                                <?php endif; ?>
+                                            </tbody>
+                                        </table>
                                     </div>
-                                    <a href="print_report.php?event_id=<?= $active_event['id'] ?>" target="_blank" class="btn-report"><i class="fas fa-print"></i> Generate PDF</a>
-                                </div>
-                            <?php endif; ?>
-                        </div>
-
-                        <div class="card <?= $active_tab == 'history' ? 'active' : '' ?>">
-                            <div class="card-header">
-                                <div>
-                                    <h3>Event Switcher</h3>
-                                    <p>Manage multiple pageants and switch between them.</p>
-                                </div>
-                                <button onclick="openCreateModal()" style="background:#1f2937; color:white; border:none; padding:8px 15px; border-radius:6px; cursor:pointer; font-size:13px;">+ Create New</button>
+                                <?php endif; ?>
                             </div>
 
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Event Name</th>
-                                        <th>Date</th>
-                                        <th>Status</th>
-                                        <th>Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($all_events as $evt): $is_curr = ($evt['status'] === 'Active'); ?>
-                                    <tr style="<?= $is_curr ? 'background:#f0fdf4;' : '' ?>">
-                                        <td><strong><?= htmlspecialchars($evt['name']) ?></strong></td>
-                                        <td><?= $evt['event_date'] ?></td>
-                                        <td><span class="badge <?= $is_curr ? 'badge-active' : 'badge-inactive' ?>"><?= $evt['status'] ?></span></td>
-                                        <td>
-                                            <?php if (!$is_curr): ?>
-                                                <button onclick="openSwitchModal(<?= $evt['id'] ?>, '<?= htmlspecialchars($evt['name'], ENT_QUOTES) ?>')" style="background:none; border:none; color:#2563eb; cursor:pointer; font-weight:600; font-size:13px; margin-right:10px;">Switch</button>
-                                                
-                                                <button onclick="openRemoveModal(<?= $evt['id'] ?>, '<?= htmlspecialchars($evt['name'], ENT_QUOTES) ?>')" style="background:none; border:none; color:#dc2626; cursor:pointer; font-weight:600; font-size:13px;">Remove</button>
-                                            <?php else: ?>
-                                                <span style="color:#059669; font-size:13px; font-weight:bold;"><i class="fas fa-check"></i> Active</span>
-                                            <?php endif; ?>
-                                        </td>
-                                    </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
+                            <div class="card <?= $active_tab == 'reports' ? 'active' : '' ?>">
+                                <div class="card-header">
+                                    <div><h3>Reports & Exports</h3><p>Generate official documents.</p></div>
+                                </div>
+                                <?php if (!$active_event): ?>
+                                    <div style="text-align:center; padding:20px; color:#9ca3af;"><i class="fas fa-exclamation-circle"></i> No active event selected.</div>
+                                <?php else: ?>
+                                    <div class="report-item">
+                                        <div class="report-icon icon-pdf"><i class="fas fa-file-pdf"></i></div>
+                                        <div style="flex:1;">
+                                            <h4 style="margin:0; font-size:16px; color:#1e293b;">Official Tabulation Report</h4>
+                                            <p style="margin:5px 0 0; font-size:13px; color:#64748b;">Download the complete post-event report.</p>
+                                        </div>
+                                        <a href="print_report.php?event_id=<?= $active_event['id'] ?>" target="_blank" class="btn-report"><i class="fas fa-print"></i> Generate PDF</a>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+
+                            <div class="card <?= $active_tab == 'history' ? 'active' : '' ?>">
+                                <div class="card-header">
+                                    <div><h3>Event Switcher</h3><p>Manage multiple pageants.</p></div>
+                                    <button onclick="openCreateModal()" style="background:#1f2937; color:white; border:none; padding:8px 15px; border-radius:6px; cursor:pointer; font-size:13px;">+ Create New</button>
+                                </div>
+                                <table class="data-table">
+                                    <thead><tr><th>Event Name</th><th>Date</th><th>Status</th><th>Action</th></tr></thead>
+                                    <tbody>
+                                        <?php foreach ($all_events as $evt): $is_curr = ($evt['status'] === 'Active'); ?>
+                                        <tr style="<?= $is_curr ? 'background:#f0fdf4;' : '' ?>">
+                                            <td><strong><?= htmlspecialchars($evt['name']) ?></strong></td>
+                                            <td><?= $evt['event_date'] ?></td>
+                                            <td><span class="badge <?= $is_curr ? 'badge-active' : 'badge-inactive' ?>"><?= $evt['status'] ?></span></td>
+                                            <td>
+                                                <?php if (!$is_curr): ?>
+                                                    <button onclick="openSwitchModal(<?= $evt['id'] ?>, '<?= htmlspecialchars($evt['name'], ENT_QUOTES) ?>')" style="background:none; border:none; color:#2563eb; cursor:pointer; font-weight:600; font-size:13px; margin-right:10px;">Switch</button>
+                                                    <button onclick="openRemoveModal(<?= $evt['id'] ?>, '<?= htmlspecialchars($evt['name'], ENT_QUOTES) ?>')" style="background:none; border:none; color:#dc2626; cursor:pointer; font-weight:600; font-size:13px;">Remove</button>
+                                                <?php else: ?>
+                                                    <span style="color:#059669; font-size:13px; font-weight:bold;"><i class="fas fa-check"></i> Active</span>
+                                                <?php endif; ?>
+                                            </td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        <?php endif; ?>
 
                         <div class="card <?= $active_tab == 'account' ? 'active' : '' ?>">
                             <div class="card-header">
-                                <div>
-                                    <h3>Account Settings</h3>
-                                    <p>Manage your login credentials.</p>
-                                </div>
+                                <div><h3>Account Settings</h3><p>Manage your login credentials.</p></div>
                             </div>
                             <form method="POST" onsubmit="showLoading()">
                                 <div class="form-group">
@@ -527,107 +521,68 @@ $me = $me_stmt->get_result()->fetch_assoc();
         </div>
     </div>
 
-    <div id="createModal" class="modal-overlay">
-        <div class="modal-content">
-            <h3 class="modal-title">Create New Event</h3>
-            <form action="../api/event.php" method="POST" onsubmit="showLoading()">
-                <input type="hidden" name="action" value="create"> 
-                <div class="form-group">
-                    <label class="form-label">Event Name</label>
-                    <input type="text" name="event_name" class="form-control" placeholder="e.g. Miss Universe 2025" required>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Date</label>
-                    <input type="date" name="event_date" class="form-control" required>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Venue</label>
-                    <input type="text" name="venue" class="form-control" placeholder="e.g. Convention Center" required>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" class="btn-cancel" onclick="document.getElementById('createModal').style.display='none'">Cancel</button>
-                    <button type="submit" class="btn-confirm">Create</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="switchModal" class="modal-overlay">
-        <div class="modal-content">
-            <h3 class="modal-title">Confirm Switch</h3>
-            <p style="color:#6b7280; font-size:14px; margin-bottom:20px;">
-                You are about to switch the active dashboard to <b id="switchTargetName"></b>. 
-                Please enter your password to confirm.
-            </p>
-            <form method="POST" onsubmit="showLoading()">
-                <input type="hidden" name="switch_event" value="1">
-                <input type="hidden" name="event_id" id="switchTargetId">
-                <div class="form-group">
-                    <input type="password" name="password_check" class="form-control" placeholder="Enter your password" required>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" class="btn-cancel" onclick="document.getElementById('switchModal').style.display='none'">Cancel</button>
-                    <button type="submit" class="btn-confirm">Switch Event</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="removeModal" class="modal-overlay">
-        <div class="modal-content" style="border-top: 5px solid #dc2626;">
-            <h3 class="modal-title" style="color:#dc2626;"><i class="fas fa-exclamation-triangle"></i> Remove Event?</h3>
-            <div style="background:#fef2f2; border:1px solid #fca5a5; padding:15px; border-radius:6px; color:#991b1b; font-size:13px; margin-bottom:20px;">
-                <strong>WARNING:</strong> You are about to archive <b id="removeTargetName"></b>. 
-                This will remove it from your active list and hide all associated data.
+    <?php if ($is_event_manager): ?>
+        <div id="createModal" class="modal-overlay">
+            <div class="modal-content">
+                <h3 class="modal-title">Create New Event</h3>
+                <form action="../api/event.php" method="POST" onsubmit="showLoading()">
+                    <input type="hidden" name="action" value="create"> 
+                    <div class="form-group"><label class="form-label">Event Name</label><input type="text" name="event_name" class="form-control" placeholder="e.g. Miss Universe 2025" required></div>
+                    <div class="form-group"><label class="form-label">Date</label><input type="date" name="event_date" class="form-control" required></div>
+                    <div class="form-group"><label class="form-label">Venue</label><input type="text" name="venue" class="form-control" placeholder="e.g. Convention Center" required></div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn-cancel" onclick="document.getElementById('createModal').style.display='none'">Cancel</button>
+                        <button type="submit" class="btn-confirm">Create</button>
+                    </div>
+                </form>
             </div>
-            <p style="font-size:14px; color:#374151; margin-bottom:10px;">Enter your password to confirm this action:</p>
-            
-            <form method="POST" onsubmit="showLoading()">
-                <input type="hidden" name="remove_event" value="1">
-                <input type="hidden" name="event_id" id="removeTargetId">
-                <div class="form-group">
-                    <input type="password" name="password_check" class="form-control" placeholder="Your Password" required>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" class="btn-cancel" onclick="document.getElementById('removeModal').style.display='none'">Cancel</button>
-                    <button type="submit" class="btn-danger">Confirm Removal</button>
-                </div>
-            </form>
         </div>
-    </div>
+
+        <div id="switchModal" class="modal-overlay">
+            <div class="modal-content">
+                <h3 class="modal-title">Confirm Switch</h3>
+                <p style="color:#6b7280; font-size:14px; margin-bottom:20px;">You are about to switch active event to <b id="switchTargetName"></b>.</p>
+                <form method="POST" onsubmit="showLoading()">
+                    <input type="hidden" name="switch_event" value="1">
+                    <input type="hidden" name="event_id" id="switchTargetId">
+                    <div class="form-group"><input type="password" name="password_check" class="form-control" placeholder="Enter your password" required></div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn-cancel" onclick="document.getElementById('switchModal').style.display='none'">Cancel</button>
+                        <button type="submit" class="btn-confirm">Switch Event</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="removeModal" class="modal-overlay">
+            <div class="modal-content" style="border-top: 5px solid #dc2626;">
+                <h3 class="modal-title" style="color:#dc2626;"><i class="fas fa-exclamation-triangle"></i> Remove Event?</h3>
+                <div style="background:#fef2f2; border:1px solid #fca5a5; padding:15px; border-radius:6px; color:#991b1b; font-size:13px; margin-bottom:20px;"><strong>WARNING:</strong> Archiving <b id="removeTargetName"></b> will hide all data.</div>
+                <form method="POST" onsubmit="showLoading()">
+                    <input type="hidden" name="remove_event" value="1">
+                    <input type="hidden" name="event_id" id="removeTargetId">
+                    <div class="form-group"><input type="password" name="password_check" class="form-control" placeholder="Your Password" required></div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn-cancel" onclick="document.getElementById('removeModal').style.display='none'">Cancel</button>
+                        <button type="submit" class="btn-danger">Confirm Removal</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    <?php endif; ?>
 
     <script>
-        function showLoading() {
-            document.getElementById('loadingOverlay').style.display = 'flex';
-        }
-
-        function openCreateModal() { document.getElementById('createModal').style.display = 'flex'; }
-        
-        function openSwitchModal(id, name) {
-            document.getElementById('switchTargetId').value = id;
-            document.getElementById('switchTargetName').innerText = name;
-            document.getElementById('switchModal').style.display = 'flex';
-        }
-
-        function openRemoveModal(id, name) {
-            document.getElementById('removeTargetId').value = id;
-            document.getElementById('removeTargetName').innerText = name;
-            document.getElementById('removeModal').style.display = 'flex';
-        }
-
+        function showLoading() { document.getElementById('loadingOverlay').style.display = 'flex'; }
         function togglePassword(inputId, icon) {
             const input = document.getElementById(inputId);
-            if (input.type === "password") {
-                input.type = "text";
-                icon.classList.remove("fa-eye");
-                icon.classList.add("fa-eye-slash");
-            } else {
-                input.type = "password";
-                icon.classList.remove("fa-eye-slash");
-                icon.classList.add("fa-eye");
-            }
+            if (input.type === "password") { input.type = "text"; icon.classList.remove("fa-eye"); icon.classList.add("fa-eye-slash"); } 
+            else { input.type = "password"; icon.classList.remove("fa-eye-slash"); icon.classList.add("fa-eye"); }
         }
 
+        <?php if ($is_event_manager): ?>
+        function openCreateModal() { document.getElementById('createModal').style.display = 'flex'; }
+        function openSwitchModal(id, name) { document.getElementById('switchTargetId').value = id; document.getElementById('switchTargetName').innerText = name; document.getElementById('switchModal').style.display = 'flex'; }
+        function openRemoveModal(id, name) { document.getElementById('removeTargetId').value = id; document.getElementById('removeTargetName').innerText = name; document.getElementById('removeModal').style.display = 'flex'; }
         function printTickets() {
             var divToPrint = document.getElementById("printableTable");
             var newWin = window.open("");
@@ -638,8 +593,9 @@ $me = $me_stmt->get_result()->fetch_assoc();
             newWin.print();
             newWin.close();
         }
+        <?php endif; ?>
 
-        // Toast Logic
+        // Toast
         function showToast(message, type = 'success') {
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
@@ -649,23 +605,8 @@ $me = $me_stmt->get_result()->fetch_assoc();
             container.appendChild(toast);
             setTimeout(() => { toast.remove(); }, 3500);
         }
-
-        <?php if (isset($_SESSION['success'])): ?>
-            showToast("<?= $_SESSION['success'] ?>", "success");
-            <?php unset($_SESSION['success']); ?>
-        <?php endif; ?>
-        <?php if (isset($_SESSION['error'])): ?>
-            showToast("<?= $_SESSION['error'] ?>", "error");
-            <?php unset($_SESSION['error']); ?>
-        <?php endif; ?>
-        
-        const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.has('success')) showToast(urlParams.get('success'), 'success');
-        if (urlParams.has('error')) showToast(urlParams.get('error'), 'error');
-        if (urlParams.has('success') || urlParams.has('error')) {
-            const newUrl = window.location.pathname + "?tab=" + "<?= $active_tab ?>";
-            window.history.replaceState({}, document.title, newUrl);
-        }
+        <?php if (isset($_SESSION['success'])): ?> showToast("<?= $_SESSION['success'] ?>", "success"); <?php unset($_SESSION['success']); ?> <?php endif; ?>
+        <?php if (isset($_SESSION['error'])): ?> showToast("<?= $_SESSION['error'] ?>", "error"); <?php unset($_SESSION['error']); ?> <?php endif; ?>
     </script>
 </body>
 </html>

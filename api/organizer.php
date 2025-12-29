@@ -59,13 +59,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $linkRes = $linkCheck->get_result();
         
         if ($linkRes->num_rows > 0) {
+            // --- RESTORE EXISTING LINK ---
             $link_id = $linkRes->fetch_assoc()['id'];
-            $restore = $conn->prepare("UPDATE event_organizers SET status='Active' WHERE id=?");
+            // [UPDATED] Ensure is_deleted is set to 0 when restoring
+            $restore = $conn->prepare("UPDATE event_organizers SET status='Active', is_deleted=0 WHERE id=?");
             $restore->bind_param("i", $link_id);
             $restore->execute();
             $msg = "Organizer restored to this event";
         } else {
-            $insert = $conn->prepare("INSERT INTO event_organizers (event_id, user_id, status) VALUES (?, ?, 'Active')");
+            // --- CREATE NEW LINK ---
+            // [UPDATED] Explicitly set is_deleted to 0
+            $insert = $conn->prepare("INSERT INTO event_organizers (event_id, user_id, status, is_deleted) VALUES (?, ?, 'Active', 0)");
             $insert->bind_param("ii", $event_id, $user_id);
             $insert->execute();
             $msg = "Organizer added successfully";
@@ -77,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         require_once __DIR__ . '/../app/core/CustomMailer.php';
 
         // 1. Website Link
-        $site_link = "https://my-bpms-project.rf.gd/bpms/public/index.php";
+        $site_link = "http://YOUR-SUBDOMAIN.rf.gd/bpms/public/index.php";
 
         // 2. Get Event Name
         $evt_name = "the Event";
@@ -186,18 +190,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
-// --- 3. REMOVE / RESTORE ---
+// --- 3. REMOVE / RESTORE / DELETE ---
 if (isset($_GET['action']) && isset($_GET['id'])) {
     $link_id = (int)$_GET['id'];
     $type = $_GET['action'];
-    $new_status = ($type === 'restore') ? 'Active' : 'Inactive';
 
-    $stmt = $conn->prepare("UPDATE event_organizers SET status = ? WHERE id = ?");
-    $stmt->bind_param("si", $new_status, $link_id);
+    if ($type === 'delete') {
+        // --- SOFT DELETE ---
+        // Hide from UI completely (is_deleted = 1)
+        $stmt = $conn->prepare("UPDATE event_organizers SET is_deleted = 1 WHERE id = ?");
+        $stmt->bind_param("i", $link_id);
+        
+        $redirect_view = 'archived'; // Stay in archive view
+        $msg = "Organizer removed permanently from list.";
+
+    } elseif ($type === 'restore') {
+        // --- RESTORE ---
+        // Make Active AND visible (is_deleted = 0)
+        $stmt = $conn->prepare("UPDATE event_organizers SET status = 'Active', is_deleted = 0 WHERE id = ?");
+        $stmt->bind_param("i", $link_id);
+        
+        $redirect_view = 'archived'; // Stay in archive view to see it vanish (or go to active if preferred)
+        $msg = "Organizer restored successfully.";
+
+    } else {
+        // --- ARCHIVE (Default 'remove') ---
+        // Just set status to Inactive
+        $stmt = $conn->prepare("UPDATE event_organizers SET status = 'Inactive' WHERE id = ?");
+        $stmt->bind_param("i", $link_id);
+        
+        $redirect_view = 'active'; // Stay in active view
+        $msg = "Organizer moved to archive.";
+    }
 
     if ($stmt->execute()) {
-        $view = ($type === 'remove') ? 'active' : 'archived';
-        header("Location: ../public/organizers.php?view=$view&success=Organizer status updated");
+        header("Location: ../public/organizers.php?view=$redirect_view&success=" . urlencode($msg));
     } else {
         header("Location: ../public/organizers.php?error=Action failed");
     }
