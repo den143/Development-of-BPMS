@@ -178,18 +178,18 @@ if ($active_event) {
                                                         </button>
                                                     </form>
 
-                                                    <a href="../api/judge.php?action=remove&id=<?= $j['link_id'] ?>" class="icon-btn btn-archive" onclick="return confirm('Archive this judge?');" title="Archive">
+                                                    <button type="button" class="icon-btn btn-archive" onclick="triggerAction('remove', <?= $j['link_id'] ?>)" title="Archive">
                                                         <i class="fas fa-archive"></i>
-                                                    </a>
+                                                    </button>
 
                                                 <?php else: ?>
-                                                    <a href="../api/judge.php?action=restore&id=<?= $j['link_id'] ?>" class="icon-btn btn-restore" onclick="return confirm('Restore this judge?');" title="Restore">
+                                                    <button type="button" class="icon-btn btn-restore" onclick="triggerAction('restore', <?= $j['link_id'] ?>)" title="Restore">
                                                         <i class="fas fa-undo"></i>
-                                                    </a>
+                                                    </button>
 
-                                                    <a href="../api/judge.php?action=delete&id=<?= $j['link_id'] ?>" class="icon-btn btn-delete" onclick="return confirm('PERMANENTLY REMOVE?\n\nThey will disappear from the list, but their account credentials remain in the database.');" title="Remove Completely">
+                                                    <button type="button" class="icon-btn btn-delete" onclick="triggerAction('delete', <?= $j['link_id'] ?>)" title="Remove Completely">
                                                         <i class="fas fa-trash"></i>
-                                                    </a>
+                                                    </button>
                                                 <?php endif; ?>
                                                 </div>
                                             </td>
@@ -204,6 +204,11 @@ if ($active_event) {
             </div>
         </div>
     </div>
+
+    <form id="actionForm" action="../api/judge.php" method="POST" style="display:none;">
+        <input type="hidden" name="action" id="formAction">
+        <input type="hidden" name="id" id="formId">
+    </form>
 
     <div id="addModal" class="modal-overlay">
         <div class="modal-content">
@@ -259,6 +264,7 @@ if ($active_event) {
     <script>
         function openModal(id) { document.getElementById(id).style.display = 'flex'; }
         function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+        
         function openEditModal(judge) {
             document.getElementById('edit_link_id').value = judge.link_id;
             document.getElementById('edit_judge_id').value = judge.judge_id;
@@ -267,6 +273,21 @@ if ($active_event) {
             document.getElementById('edit_chairman').checked = (judge.is_chairman == 1);
             openModal('editModal');
         }
+
+        // NEW SECURE ACTION HANDLER
+        function triggerAction(action, id) {
+            let msg = '';
+            if(action === 'remove') msg = 'Archive this judge?';
+            else if(action === 'restore') msg = 'Restore this judge?';
+            else if(action === 'delete') msg = 'PERMANENTLY REMOVE?\n\nThey will disappear from the list, but their account credentials remain in the database.';
+
+            if (confirm(msg)) {
+                document.getElementById('formAction').value = action;
+                document.getElementById('formId').value = id;
+                document.getElementById('actionForm').submit();
+            }
+        }
+
         function togglePassword(inputId, icon) {
             const input = document.getElementById(inputId);
             if (input.type === "password") {
@@ -289,6 +310,7 @@ if ($active_event) {
             container.appendChild(toast);
             setTimeout(() => { toast.remove(); }, 3500);
         }
+        
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('success')) showToast(urlParams.get('success'), 'success');
         if (urlParams.has('error')) showToast(urlParams.get('error'), 'error');

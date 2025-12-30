@@ -157,6 +157,21 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                                 <div class="card-body">
                                     <div class="card-title"><?= htmlspecialchars($c['name']) ?></div>
                                     <div class="card-subtitle"><?= htmlspecialchars($c['hometown']) ?></div>
+
+                                    <?php if($view === 'active'): ?>
+                                        <?php 
+                                            $comp_status = $c['competition_status'] ?? 'Active'; // You need to fetch this in your Model later
+                                            $badge_color = match($comp_status) {
+                                                'Qualified' => '#059669', // Green
+                                                'Eliminated' => '#dc2626', // Red
+                                                default => '#2563eb' // Blue
+                                            };
+                                        ?>
+                                        <div style="font-size:10px; font-weight:bold; color:white; background:<?= $badge_color ?>; 
+                                                    padding:2px 8px; border-radius:10px; display:inline-block; margin-bottom:8px;">
+                                            <?= strtoupper($comp_status) ?>
+                                        </div>
+                                    <?php endif; ?>
                                     
                                     <div class="stats-row">
                                         <span>Age: <?= $c['age'] ?></span>

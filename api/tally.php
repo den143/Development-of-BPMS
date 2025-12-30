@@ -1,5 +1,5 @@
 <?php
-// bpms/api/tally.php
+// bpms/api/tally.php (READ-ONLY VERSION)
 ini_set('display_errors', 0); 
 error_reporting(E_ALL);
 header('Content-Type: application/json');
@@ -27,7 +27,7 @@ function getRoundMetadata($conn, $round_id) {
 }
 
 // ==========================================================
-// GET REQUEST
+// GET REQUEST ONLY
 // ==========================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : 0;
@@ -73,79 +73,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         'ranking' => $results,
         'audit' => ScoreCalculator::getAuditData($round_id)
     ]);
-    exit();
-}
-
-// ==========================================================
-// POST REQUEST (LOCK)
-// ==========================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!in_array($_SESSION['role'], ['Tabulator', 'Event Manager'])) {
-        echo json_encode(['error' => 'Unauthorized']); exit;
-    }
-
-    $input = json_decode(file_get_contents('php://input'), true);
-    $round_id = (int)($input['round_id'] ?? 0);
-    if ($round_id === 0) { echo json_encode(['error' => 'Invalid Round ID']); exit; }
-
-    // --- [NEW] VALIDATION GATE ---
-    
-    // 1. Check Configuration (Segments)
-    $seg_check = $conn->query("SELECT COUNT(*) as cnt FROM segments WHERE round_id = $round_id")->fetch_assoc();
-    if ($seg_check['cnt'] == 0) {
-        echo json_encode(['error' => 'Cannot Lock: No segments/criteria configured for this round.']);
-        exit;
-    }
-
-    // 2. Check Judges & Submissions
-    // Get Event ID
-    $evt_id_q = $conn->query("SELECT event_id FROM rounds WHERE id = $round_id")->fetch_assoc();
-    $event_id = $evt_id_q['event_id'];
-
-    // Count Active Judges
-    $j_total_q = $conn->query("SELECT COUNT(*) as cnt FROM event_judges WHERE event_id = $event_id AND status = 'Active' AND is_deleted = 0")->fetch_assoc();
-    $total_judges = (int)$j_total_q['cnt'];
-
-    if ($total_judges === 0) {
-         echo json_encode(['error' => 'Cannot Lock: No active judges found.']);
-         exit;
-    }
-
-    // Count Submitted Judges
-    $j_sub_q = $conn->query("SELECT COUNT(*) as cnt FROM judge_round_status WHERE round_id = $round_id AND status = 'Submitted'")->fetch_assoc();
-    $submitted_judges = (int)$j_sub_q['cnt'];
-
-    // Compare
-    if ($submitted_judges < $total_judges) {
-        $remaining = $total_judges - $submitted_judges;
-        echo json_encode(['error' => "Cannot Lock: Waiting for $remaining judge(s) to submit scores."]);
-        exit;
-    }
-
-    // --- END VALIDATION ---
-
-    $final_results = ScoreCalculator::calculate($round_id);
-
-    $conn->begin_transaction();
-    try {
-        $conn->query("DELETE FROM round_rankings WHERE round_id = $round_id");
-        $stmt = $conn->prepare("INSERT INTO round_rankings (round_id, contestant_id, total_score, `rank`) VALUES (?, ?, ?, ?)");
-        
-        foreach ($final_results as $row) {
-            $cid = $row['contestant']['detail_id'] ?? 0;
-            $score = $row['final_score'];
-            $rank = $row['rank'];
-            $stmt->bind_param("iidi", $round_id, $cid, $score, $rank);
-            $stmt->execute();
-        }
-
-        $conn->query("UPDATE rounds SET status = 'Completed' WHERE id = $round_id");
-        $conn->commit();
-        echo json_encode(['status' => 'success']);
-    } catch (Exception $e) {
-        $conn->rollback();
-        echo json_encode(['error' => $e->getMessage()]);
-    }
     exit();
 }
 ?>

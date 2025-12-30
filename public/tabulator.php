@@ -73,7 +73,7 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
         
         .lock-btn { background: var(--dark); color: white; border: none; padding: 8px 20px; border-radius: 6px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: 0.2s; font-size: 13px; }
         .lock-btn:hover { background: #1f2937; }
-        .lock-btn:disabled { background: #059669; cursor: not-allowed; opacity: 1; }
+        .lock-btn:disabled { background: #4b5563; cursor: not-allowed; opacity: 0.7; }
 
         /* --- TABLES --- */
         .tally-card { background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
@@ -283,7 +283,13 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
 <script>
     const ROUND_ID = <?= $current_round_id ?>;
     const EVENT_ID = <?= $event_id ?>;
-    const API_URL = "../api/tally.php";
+    
+    // FETCH (GET) uses tally.php (Data Feeder)
+    const TALLY_API_URL = "../api/tally.php";
+    
+    // ACTIONS (POST) uses rounds.php (Traffic Controller)
+    const ACTION_API_URL = "../api/rounds.php"; 
+    
     const AWARDS_API = "../api/awards_tally.php";
     let currentData = null;
     let allContestants = []; 
@@ -318,7 +324,7 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
         if(btnRefreshIcon) btnRefreshIcon.classList.add('fa-spin');
 
         try {
-            const res = await fetch(`${API_URL}?round_id=${ROUND_ID}`);
+            const res = await fetch(`${TALLY_API_URL}?round_id=${ROUND_ID}`);
             currentData = await res.json();
             if (currentData.status === 'success') {
                 renderJudgeStatus(currentData.judges, currentData.submitted_judges || []);
@@ -327,16 +333,28 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
                 
                 document.getElementById('roundStatusText').innerText = currentData.round_status;
                 
-                // [FIXED] ENABLE BUTTON FOR RE-LOCKING (UPDATES)
+                // BUTTON STATE LOGIC
                 const btn = document.getElementById('btnLock');
                 if (currentData.round_status === 'Completed') {
-                    btn.disabled = false; // ALLOW CLICK
-                    btn.innerHTML = '<i class="fas fa-sync"></i> UPDATE RANKINGS'; // CHANGED TEXT
-                    btn.style.background = '#059669'; // Green to show it's done but updateable
+                    // If completed, allow Re-Open (handled via rounds.php if implemented) or Update
+                    // For now, we show LOCKED state
+                    btn.disabled = true;
+                    btn.innerHTML = '<i class="fas fa-check-circle"></i> LOCKED';
+                    btn.style.background = '#4b5563'; 
                 } else {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fas fa-lock"></i> LOCK ROUND';
-                    btn.style.background = ''; // Default dark color
+                    // Check if all judges submitted
+                    const totalJ = currentData.judges.length;
+                    const subJ = (currentData.submitted_judges || []).length;
+                    
+                    if(totalJ > 0 && subJ === totalJ) {
+                        btn.disabled = false;
+                        btn.innerHTML = '<i class="fas fa-lock"></i> LOCK ROUND';
+                        btn.style.background = '#059669'; // Green means ready
+                    } else {
+                        btn.disabled = true;
+                        btn.innerHTML = `Waiting (${subJ}/${totalJ})`;
+                        btn.style.background = '#6b7280';
+                    }
                 }
             }
         } catch (e) { console.error(e); }
@@ -446,7 +464,6 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
 
         tbody.innerHTML = ranking.map(row => {
             const c = row.contestant;
-            // REMOVED numDisplay logic here
             return `<tr class="${row.rank <= 3 ? 'rank-'+row.rank : ''}">
                 <td><div class="rank-box">${row.rank}</div></td>
                 <td class="contestant-cell">
@@ -492,7 +509,6 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
 
         ranking.forEach(row => {
             const c = row.contestant;
-            // REMOVED numDisplay logic here
             htmlScreen += `<tr><td class="contestant-cell"><b>${c.name}</b></td>`;
             audit.segments.forEach(seg => {
                 const segCriteria = audit.criteria.filter(cr => cr.segment_id == seg.id);
@@ -544,7 +560,6 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
 
             ranking.forEach(row => {
                 const c = row.contestant;
-                // REMOVED numDisplay logic here
                 printHTML += `<tr><td><b>${c.name}</b></td>`;
 
                 judges.forEach(j => {
@@ -572,24 +587,30 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
         containerPrint.innerHTML = printHTML;
     }
 
+    // --- LOCK ROUND LOGIC (POINTING TO ROUNDS.PHP) ---
     async function lockRound() {
-        if (!confirm("CONFIRM FINALIZATION?\n\nThis will lock (or update) all scores for this round.")) return;
+        if (!confirm("CONFIRM FINALIZATION?\n\nThis will lock the scores and promote winners to the next round.")) return;
         const btn = document.getElementById('btnLock');
         btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Processing...';
         btn.disabled = true;
 
+        // Use FormData for compatibility with api/rounds.php
+        const formData = new FormData();
+        formData.append('action', 'lock');
+        formData.append('round_id', ROUND_ID);
+
         try {
-            const res = await fetch(API_URL, {
+            const res = await fetch(ACTION_API_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ round_id: ROUND_ID })
+                body: formData
             });
             const result = await res.json();
+            
             if (result.status === 'success') { 
                 alert("Success! Round Completed."); 
                 fetchTally(); 
             } else { 
-                alert("Error: " + result.error); 
+                alert("Error: " + result.message); 
                 btn.disabled = false;
                 btn.innerHTML = '<i class="fas fa-lock"></i> LOCK ROUND';
             }

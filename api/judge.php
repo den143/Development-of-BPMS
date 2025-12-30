@@ -175,10 +175,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
-// --- 3. REMOVE / RESTORE / DELETE ---
-if (isset($_GET['action']) && isset($_GET['id'])) {
-    $link_id = (int)$_GET['id'];
-    $action  = $_GET['action']; 
+// --- 3. REMOVE / RESTORE / DELETE (SECURED) ---
+// Only accept POST requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && isset($_POST['id'])) {
+    
+    $link_id = (int)$_POST['id'];
+    $action  = $_POST['action'];
 
     if ($action === 'delete') {
         // --- SOFT DELETE: Hide from UI ---

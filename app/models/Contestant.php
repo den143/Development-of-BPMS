@@ -11,7 +11,9 @@ class Contestant
     public static function getAllByManager(int $managerId, string $status, string $search = ''): array
     {
         $db = self::db();
+        // UPDATED: Added cd.status AS competition_status
         $sql = "SELECT u.id, u.name, u.email, u.status, 
+                       cd.status AS competition_status, 
                        cd.age, cd.height, cd.vital_stats, cd.hometown, cd.motto, cd.photo, cd.event_id,
                        e.name as event_name 
                 FROM users u 
@@ -24,10 +26,11 @@ class Contestant
         return self::fetchData($sql, [$managerId, $status], "is", $search);
     }
 
-    // --- NEW METHOD FOR CONTESTANT MANAGER ---
     public static function getAllByOrganizer(int $organizerId, string $status, string $search = ''): array
     {
+        // UPDATED: Added cd.status AS competition_status
         $sql = "SELECT u.id, u.name, u.email, u.status, 
+                       cd.status AS competition_status,
                        cd.age, cd.height, cd.vital_stats, cd.hometown, cd.motto, cd.photo, cd.event_id,
                        e.name as event_name 
                 FROM users u 
@@ -42,7 +45,6 @@ class Contestant
         return self::fetchData($sql, [$organizerId, $status], "is", $search);
     }
 
-    // Helper to reduce code duplication
     private static function fetchData($sql, $baseParams, $baseTypes, $search) {
         $db = self::db();
         $sql .= " AND cd.is_deleted = 0 "; 

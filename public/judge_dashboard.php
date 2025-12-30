@@ -49,8 +49,10 @@ foreach ($segments_raw as $s) {
 $cont_q = "SELECT u.id, u.name, cd.photo, cd.age, cd.hometown 
            FROM contestant_details cd 
            JOIN users u ON cd.user_id = u.id 
-           WHERE cd.event_id = ? AND u.status = 'Active' 
-           ORDER BY cd.id ASC"; // Sorting by ID to keep order consistent
+           WHERE cd.event_id = ? 
+            AND u.status = 'Active' 
+            AND cd.status != 'Eliminated'
+           ORDER BY cd.contestant_number ASC"; // Sorting by ID to keep order consistent
 $stmt_c = $conn->prepare($cont_q);
 $stmt_c->bind_param("i", $event_id);
 $stmt_c->execute();
@@ -157,6 +159,10 @@ $is_locked = ($conn->query("SELECT status FROM judge_round_status WHERE round_id
         <div style="font-weight: 800; font-size: 1.1rem; line-height: 1;">
             <?= htmlspecialchars($active['round_title']) ?>
         </div>
+    </div>
+
+    <div id="saveStatus" style="font-size: 0.8rem; color: #9ca3af; margin-right: 15px; font-weight: bold;">
+        All changes saved
     </div>
 
     <a href="logout.php" class="logout-btn" onclick="return confirm('Exit the judging panel? Your progress is saved.')">
@@ -315,6 +321,7 @@ function updateCardStatus() {
 async function saveDraft() {
     if(!activeCId || <?= $is_locked ? 'true' : 'false' ?>) return;
     
+    // Gather scores and comments
     const scores = {};
     document.querySelectorAll('.crit-input').forEach(i => {
         // Ensure we don't save empty strings as 0
@@ -334,6 +341,11 @@ async function saveDraft() {
     if(!drafts.comments[activeCId]) drafts.comments[activeCId] = {};
     drafts.comments[activeCId][currentSegId] = comment;
 
+    const statusEl = document.getElementById('saveStatus');
+    // 2. SHOW "SAVING"
+    statusEl.innerText = "Saving...";
+    statusEl.style.color = "#F59E0B";
+
     try {
         await fetch('../api/save_draft.php', {
             method: 'POST',
@@ -346,26 +358,56 @@ async function saveDraft() {
                 comment: comment
             })
         });
-    } catch(e) { console.error("Auto-save failed."); }
+
+        statusEl.innerText = "Saved";
+        statusEl.style.color = "#fff";
+    } catch(e) { 
+        // 4. SHOW ERROR
+        statusEl.innerText = "Connection Error!";
+        statusEl.style.color = "#dc2626"; // Red
+    }
 }
 
 function validateAndSubmit() {
     let missingCount = 0;
+    
+    // 1. Client-Side Validation (UX only)
     Object.values(segments).forEach(s => {
         contestants.forEach(c => {
-            s.criteria.forEach(crit => {
-                if(!drafts.scores[c.id] || !drafts.scores[c.id][crit.id]) missingCount++;
-            });
+            if (s.criteria) {
+                s.criteria.forEach(crit => {
+                    // Check if score exists in our local draft object
+                    if (!drafts.scores[c.id] || 
+                        drafts.scores[c.id][crit.id] === undefined || 
+                        drafts.scores[c.id][crit.id] === "") {
+                        missingCount++;
+                    }
+                });
+            }
         });
     });
 
-    if(missingCount > 0) {
-        alert(`Incomplete Scorecard: There are ${missingCount} criteria still missing scores. Please ensure every contestant is scored in every segment.`);
+    if (missingCount > 0) {
+        alert(`Incomplete Scorecard: There are ${missingCount} criteria still missing scores.`);
         return;
     }
 
-    if(confirm("FINAL SUBMISSION: Are you sure? Once submitted, your scores will be locked and sent to the tabulator.")) {
-        window.location.href = "../api/submit_scores.php?round_id=" + roundId;
+    if (confirm("FINAL SUBMISSION: This will lock your scores. Are you sure?")) {
+        // 2. Create a hidden form dynamically to send a POST request
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '../api/submit_scores.php';
+
+        const inputRound = document.createElement('input');
+        inputRound.type = 'hidden';
+        inputRound.name = 'round_id';
+        inputRound.value = roundId;
+
+        form.appendChild(inputRound);
+        document.body.appendChild(form);
+        
+        // 3. Submit
+        form.submit();
     }
 }
 
