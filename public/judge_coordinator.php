@@ -115,12 +115,14 @@ $submitted_count = 0;
 if ($event_id) {
     $sql = "
         SELECT u.id, u.name, u.email, ej.is_chairman, ej.status as judge_role_status,
-               COALESCE(jrs.status, 'Pending') as round_status,
-               jrs.submitted_at
+               COALESCE(MAX(jrs.status), 'Pending') as round_status,
+               MAX(jrs.submitted_at) as submitted_at
         FROM users u
         JOIN event_judges ej ON u.id = ej.judge_id
         LEFT JOIN judge_round_status jrs ON u.id = jrs.judge_id AND jrs.round_id = ?
         WHERE ej.event_id = ? AND ej.status = 'Active'
+        GROUP BY u.id
+        ORDER BY ej.is_chairman DESC, u.name ASC
     ";
     
     $bind_round = $active_round_id ?? 0;
@@ -132,6 +134,7 @@ if ($event_id) {
     while ($row = $j_result->fetch_assoc()) {
         $judges[] = $row;
         $total_judges++;
+        // Check strictly for 'Submitted' to update the counter accurately
         if ($row['round_status'] === 'Submitted') {
             $submitted_count++;
         }

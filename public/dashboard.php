@@ -242,6 +242,11 @@ unset($_SESSION['success'], $_SESSION['error'], $_SESSION['show_modal']);
                         <div class="card-title">Quick Actions</div>
                         <?php if($event_id): ?>
                             <div class="quick-actions-list">
+                                
+                                <a href="live_screen.php" target="_blank" class="btn-quick primary">
+                                    <i class="fas fa-desktop"></i> Launch Live Screen
+                                </a>
+
                                 <a href="tabulator.php" class="btn-quick primary">
                                     <i class="fas fa-chart-line"></i> Live Tabulation
                                 </a>

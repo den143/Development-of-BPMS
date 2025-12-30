@@ -326,15 +326,17 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
                 renderAuditTable();
                 
                 document.getElementById('roundStatusText').innerText = currentData.round_status;
+                
+                // [FIXED] ENABLE BUTTON FOR RE-LOCKING (UPDATES)
                 const btn = document.getElementById('btnLock');
                 if (currentData.round_status === 'Completed') {
-                    btn.disabled = true;
-                    btn.innerHTML = '<i class="fas fa-check-double"></i> COMPLETED';
-                    btn.style.background = '#059669';
+                    btn.disabled = false; // ALLOW CLICK
+                    btn.innerHTML = '<i class="fas fa-sync"></i> UPDATE RANKINGS'; // CHANGED TEXT
+                    btn.style.background = '#059669'; // Green to show it's done but updateable
                 } else {
                     btn.disabled = false;
                     btn.innerHTML = '<i class="fas fa-lock"></i> LOCK ROUND';
-                    btn.style.background = ''; 
+                    btn.style.background = ''; // Default dark color
                 }
             }
         } catch (e) { console.error(e); }
@@ -571,7 +573,7 @@ $current_round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : ($rounds
     }
 
     async function lockRound() {
-        if (!confirm("CONFIRM FINALIZATION?\n\nThis will lock all scores for this round. Judges will not be able to edit scores anymore.")) return;
+        if (!confirm("CONFIRM FINALIZATION?\n\nThis will lock (or update) all scores for this round.")) return;
         const btn = document.getElementById('btnLock');
         btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Processing...';
         btn.disabled = true;
