@@ -80,8 +80,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         // =============================================================
         require_once __DIR__ . '/../app/core/CustomMailer.php';
 
-        // 1. Website Link
-        $site_link = "http://YOUR-SUBDOMAIN.rf.gd/bpms/public/index.php";
+        // 1. Website Link for infinityfree
+        //$site_link = "http://my-bpmps-project.rf.gd/bpms/public/index.php";
+        $site_link = "https://juvenal-esteban-octavalent.ngrok-free.dev/bpms/public/index.php";
 
         // 2. Get Event Name
         $evt_name = "the Event";

@@ -21,7 +21,8 @@ if (isset($_POST['user_id'])) {
         exit();
     }
 
-    $site_link = "http://YOUR-SUBDOMAIN.rf.gd/bpms/public/index.php"; // CHANGE THIS IF NEEDED
+    $site_link = "http://my-bpmps-project.rf.gd/bpms/public/index.php"; // for infinityfree
+    $site_link = "https://juvenal-esteban-octavalent.ngrok-free.dev/bpms/public/index.php"; //for ngrok
     $msg = "";
     $status = "error";
 
