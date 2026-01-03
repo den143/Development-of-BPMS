@@ -9,16 +9,13 @@ class ScoreCalculator {
         $db = self::db();
         $round_id = (int)$round_id;
 
-        // 1. Fetch Round Context (To determine if Gatekeeper is needed)
+        // 1. Fetch Round Context
         $r_data = $db->query("SELECT ordering, event_id FROM rounds WHERE id = $round_id")->fetch_assoc();
+        if (!$r_data) return [];
+
         $is_prelim = ($r_data['ordering'] == 1);
 
-        // 2. GATEKEEPER LOGIC (The Filter)
-        // Round 1 (Prelims): Allow Everyone (Active, Qualified, or Eliminated - history preserved)
-        // Round 2+ (Finals): Allow ONLY 'Qualified' ... OR ... those who actually competed (have scores).
-        // (The 'OR' clause ensures that when you Lock a round and losers become 'Eliminated', 
-        // they don't vanish from the Result Sheet immediately).
-        
+        // 2. GATEKEEPER LOGIC
         $status_clause = "";
         if (!$is_prelim) {
             $status_clause = "AND (
@@ -36,9 +33,9 @@ class ScoreCalculator {
                               AND ej.is_deleted = 0")->fetch_all(MYSQLI_ASSOC);
         
         $judge_ids = array_column($judges, 'id');
-        $judge_count = count($judge_ids);
+        $total_judges = count($judge_ids);
 
-        // 4. Fetch Contestants (Applying the Gatekeeper)
+        // 4. Fetch Contestants
         $c_sql = "SELECT u.id as user_id, cd.id as detail_id, u.name, cd.contestant_number, cd.photo 
                   FROM users u
                   JOIN contestant_details cd ON u.id = cd.user_id
@@ -50,13 +47,13 @@ class ScoreCalculator {
                   
         $contestants = $db->query($c_sql)->fetch_all(MYSQLI_ASSOC);
 
-        // 5. Fetch Segments & Criteria (OPTIMIZATION: Fetch ALL criteria once)
+        // 5. Fetch Segments & Criteria
         $segments = $db->query("SELECT id, weight_percentage FROM segments WHERE round_id = $round_id ORDER BY ordering")->fetch_all(MYSQLI_ASSOC);
         
-        $all_criteria = $db->query("SELECT id, segment_id FROM criteria 
+        $all_criteria = $db->query("SELECT id, segment_id, max_score FROM criteria
                                     WHERE segment_id IN (SELECT id FROM segments WHERE round_id = $round_id)")->fetch_all(MYSQLI_ASSOC);
 
-        // Map criteria by Segment ID to avoid queries in the loop
+        // Map criteria by Segment ID
         $criteria_by_segment = [];
         foreach ($all_criteria as $c) {
             $criteria_by_segment[$c['segment_id']][] = $c['id'];
@@ -74,12 +71,22 @@ class ScoreCalculator {
 
         foreach ($contestants as $c) {
             $uid = $c['user_id'];
+
             $grand_total = 0;
             $judge_totals = [];
+            $contestant_status = 'Completed';
+            $judges_who_scored_count = 0;
 
+            if ($total_judges === 0) {
+                $contestant_status = 'Pending';
+            }
+
+            // Iterate through ALL active judges (Requirement: check if they have scored)
             foreach ($judge_ids as $jid) {
                 $judge_round_total = 0;
+                $judge_is_complete = true;
                 
+                // For this judge, calculate score based on Segments -> Criteria
                 foreach ($segments as $seg) {
                     $sid = $seg['id'];
                     $weight = (float)$seg['weight_percentage'] / 100;
@@ -88,35 +95,59 @@ class ScoreCalculator {
                     
                     $seg_score_sum = 0;
                     foreach ($criteria_ids as $crit_id) {
-                        $val = $score_map[$uid][$jid][$crit_id] ?? 0;
+                        // CRITICAL: Check if score exists.
+                        // Do not treat missing score as 0.
+                        if (!isset($score_map[$uid][$jid][$crit_id])) {
+                            $judge_is_complete = false;
+                            break;
+                        }
+                        $val = $score_map[$uid][$jid][$crit_id];
                         $seg_score_sum += $val;
                     }
-                    
+
+                    if (!$judge_is_complete) break;
+
+                    // Logic Confirmation: Summing raw criteria scores, then applying segment weight.
+                    // Note: This assumes criteria.max_score sums match the segment's intended raw base.
                     $judge_round_total += ($seg_score_sum * $weight);
                 }
 
-                $judge_totals[$jid] = $judge_round_total; 
-                $grand_total += $judge_round_total;
+                if (!$judge_is_complete) {
+                    $contestant_status = 'Pending';
+                    $judge_totals[$jid] = 'Pending';
+                } else {
+                    $judge_totals[$jid] = $judge_round_total;
+                    $grand_total += $judge_round_total;
+                    $judges_who_scored_count++;
+                }
             }
 
-            $final_score = ($judge_count > 0) ? $grand_total / $judge_count : 0;
+            // Logic: If ANY active judge hasn't scored, the final result is Pending.
+            // Do not calculate partial averages.
+            if ($contestant_status === 'Pending' || $judges_who_scored_count < $total_judges) {
+                 $final_score = 0;
+                 $contestant_status = 'Pending';
+            } else {
+                 $final_score = ($judges_who_scored_count > 0) ? $grand_total / $judges_who_scored_count : 0;
+            }
 
             // Prepare Display Data
             $formatted_judge_scores = [];
             foreach($judge_totals as $j_id => $sc) {
-                $formatted_judge_scores[$j_id] = number_format($sc, 2);
+                $formatted_judge_scores[$j_id] = ($sc === 'Pending') ? 'Pending' : number_format($sc, 2);
             }
 
             $ranking[] = [
                 'contestant' => $c,
                 'judge_scores' => $formatted_judge_scores, 
                 'raw_score' => $final_score,               
-                'final_score' => number_format($final_score, 2), 
+                'final_score' => ($contestant_status === 'Pending') ? 'Pending' : number_format($final_score, 2),
+                'status' => $contestant_status,
                 'rank' => 0
             ];
         }
 
-        // 8. Sort using RAW float score for accuracy
+        // 8. Sort
         usort($ranking, function($a, $b) { 
             return $b['raw_score'] <=> $a['raw_score']; 
         });
@@ -124,7 +155,12 @@ class ScoreCalculator {
         // 9. Rank
         $rank = 1;
         foreach ($ranking as $key => $item) {
-            if ($key > 0 && $item['final_score'] == $ranking[$key-1]['final_score']) {
+            if ($item['status'] === 'Pending') {
+                $ranking[$key]['rank'] = '-';
+                continue;
+            }
+
+            if ($key > 0 && $item['final_score'] == $ranking[$key-1]['final_score'] && $ranking[$key-1]['status'] !== 'Pending') {
                 $ranking[$key]['rank'] = $ranking[$key-1]['rank'];
             } else {
                 $ranking[$key]['rank'] = $rank;
