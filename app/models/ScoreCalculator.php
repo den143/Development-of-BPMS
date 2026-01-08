@@ -50,8 +50,14 @@ class ScoreCalculator {
         // 5. Fetch Segments & Criteria
         $segments = $db->query("SELECT id, weight_percentage FROM segments WHERE round_id = $round_id ORDER BY ordering")->fetch_all(MYSQLI_ASSOC);
         
-        $all_criteria = $db->query("SELECT id, segment_id, max_score FROM criteria
-                                    WHERE segment_id IN (SELECT id FROM segments WHERE round_id = $round_id)")->fetch_all(MYSQLI_ASSOC);
+        // Optimize: Use collected segment IDs to avoid subquery
+        $segment_ids = array_column($segments, 'id');
+        if (empty($segment_ids)) {
+             $all_criteria = [];
+        } else {
+             $ids_str = implode(',', $segment_ids);
+             $all_criteria = $db->query("SELECT id, segment_id, max_score FROM criteria WHERE segment_id IN ($ids_str)")->fetch_all(MYSQLI_ASSOC);
+        }
 
         // Map criteria by Segment ID
         $criteria_by_segment = [];
@@ -60,7 +66,8 @@ class ScoreCalculator {
         }
 
         // 6. Fetch Scores Map
-        $scores_raw = $db->query("SELECT * FROM scores WHERE round_id = $round_id")->fetch_all(MYSQLI_ASSOC);
+        // Optimize: Select only required columns instead of SELECT *
+        $scores_raw = $db->query("SELECT contestant_id, judge_id, criteria_id, score_value FROM scores WHERE round_id = $round_id")->fetch_all(MYSQLI_ASSOC);
         $score_map = [];
         foreach ($scores_raw as $s) {
             $score_map[$s['contestant_id']][$s['judge_id']][$s['criteria_id']] = (float)$s['score_value']; 
