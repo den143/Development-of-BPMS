@@ -4,6 +4,8 @@ requireLogin();
 requireRole(['Event Manager', 'Contestant Manager']);
 require_once __DIR__ . '/../app/config/database.php';
 require_once __DIR__ . '/../app/models/Contestant.php';
+require_once __DIR__ . '/../app/core/flash.php';
+require_once __DIR__ . '/../app/core/csrf.php';
 
 $view = $_GET['view'] ?? 'active';
 $search = trim($_GET['search'] ?? '');
@@ -208,6 +210,7 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                                         </button>
                                         
                                         <form action="../api/resend_email.php" method="POST" style="margin:0;" onsubmit="return confirm('Send reminder email?');">
+                                            <?php Csrf::renderInput(); ?>
                                             <input type="hidden" name="user_id" value="<?= $c['id'] ?>">
                                             <input type="hidden" name="action_type" value="reminder">
                                             <button type="submit" class="icon-btn btn-reminder" title="Send Login Reminder">
@@ -216,6 +219,7 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                                         </form>
 
                                         <form action="../api/resend_email.php" method="POST" style="margin:0;" onsubmit="return confirm('RESET password and email it?');">
+                                            <?php Csrf::renderInput(); ?>
                                             <input type="hidden" name="user_id" value="<?= $c['id'] ?>">
                                             <input type="hidden" name="action_type" value="reset">
                                             <button type="submit" class="icon-btn btn-reset" title="Reset Password">
@@ -241,6 +245,7 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         <div class="modal-content">
             <h3>Add New Contestant</h3>
             <form action="../api/contestant.php" method="POST" enctype="multipart/form-data">
+                <?php Csrf::renderInput(); ?>
                 <input type="hidden" name="action" value="create">
                 <div class="form-group"><label>Event</label><select name="event_id" class="form-control" required><?php foreach ($my_events as $evt): ?><option value="<?= $evt['id'] ?>"><?= htmlspecialchars($evt['name']) ?></option><?php endforeach; ?></select></div>
                 <div class="form-row"><div class="form-group"><label>Name</label><input type="text" name="name" class="form-control" required></div><div class="form-group"><label>Age</label><input type="number" name="age" class="form-control" required></div></div>
@@ -258,6 +263,7 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         <div class="modal-content">
             <h3 id="modalTitle">Edit Contestant</h3>
             <form action="../api/contestant.php" method="POST" enctype="multipart/form-data">
+                <?php Csrf::renderInput(); ?>
                 <input type="hidden" name="action" value="update">
                 <input type="hidden" name="contestant_id" id="edit_id">
                 <div class="form-group"><label>Event</label><select name="event_id" id="edit_event_id" class="form-control" required><?php foreach ($my_events as $evt): ?><option value="<?= $evt['id'] ?>"><?= htmlspecialchars($evt['name']) ?></option><?php endforeach; ?></select></div>
@@ -331,13 +337,13 @@ $my_events = $evt_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
             container.appendChild(toast);
             setTimeout(() => { toast.remove(); }, 3500);
         }
-        const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.has('success')) showToast(urlParams.get('success'), 'success');
-        if (urlParams.has('error')) showToast(urlParams.get('error'), 'error');
-        if (urlParams.has('success') || urlParams.has('error')) {
-            const newUrl = window.location.pathname + (urlParams.has('view') ? '?view=' + urlParams.get('view') : '');
-            window.history.replaceState({}, document.title, newUrl);
-        }
+
+        <?php if (Flash::has('success')): ?>
+            showToast("<?= htmlspecialchars(Flash::get('success')) ?>", 'success');
+        <?php endif; ?>
+        <?php if (Flash::has('error')): ?>
+            showToast("<?= htmlspecialchars(Flash::get('error')) ?>", 'error');
+        <?php endif; ?>
     </script>
 </body>
 </html>

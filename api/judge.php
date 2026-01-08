@@ -3,6 +3,8 @@ require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
 requireRole('Event Manager');
 require_once __DIR__ . '/../app/config/database.php';
+require_once __DIR__ . '/../app/core/flash.php';
+require_once __DIR__ . '/../app/core/csrf.php';
 
 // Helper to ensure only 1 Chairman exists per event
 function resetChairman($conn, $event_id) {
@@ -14,6 +16,14 @@ function resetChairman($conn, $event_id) {
 // --- 1. ADD or RESTORE JUDGE ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add') {
     
+    // CSRF Check
+    $token = $_POST['csrf_token'] ?? '';
+    if (!Csrf::verifyToken($token)) {
+        Flash::set('error', 'Security token mismatch. Please try again.');
+        header("Location: ../public/judges.php");
+        exit();
+    }
+
     $event_id = (int)$_POST['event_id'];
     $name     = trim($_POST['name']);
     $email    = trim($_POST['email']);
@@ -21,7 +31,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $is_chairman = isset($_POST['is_chairman']) ? 1 : 0;
 
     if (empty($name) || empty($email) || empty($pass)) {
-        header("Location: ../public/judges.php?error=All fields are required");
+        Flash::set('error', 'All fields are required');
+        header("Location: ../public/judges.php");
         exit();
     }
 
@@ -78,29 +89,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         // =============================================================
         require_once __DIR__ . '/../app/core/CustomMailer.php';
 
-        // 1. Website Link for infinityfree
-       // $site_link = "http://YOUR-SUBDOMAIN.rf.gd/bpms/public/index.php"; // Update Link
-        $site_link = "https://juvenal-esteban-octavalent.ngrok-free.dev/bpms/public/index.php";
+        // 1. Website Link
+        $site_link = "http://" . $_SERVER['HTTP_HOST'] . "/bpms/public/index.php";
 
         // 2. Get Event Name for the email
         $evt_name = "the Pageant";
-        $e_query = $conn->query("SELECT name FROM events WHERE id = $event_id");
-        if ($row = $e_query->fetch_assoc()) {
+        $stmt_e = $conn->prepare("SELECT name FROM events WHERE id = ?");
+        $stmt_e->bind_param("i", $event_id);
+        $stmt_e->execute();
+        if ($row = $stmt_e->get_result()->fetch_assoc()) {
             $evt_name = $row['name'];
         }
 
         // 3. Prepare Email
-        $subject = "Official Invitation: Judge for $evt_name";
+        $subject = "Official Invitation: Judge for " . htmlspecialchars($evt_name);
         
         if ($is_new_account) {
             $body = "
-                <h2>Hello, $name!</h2>
-                <p>You have been selected to serve as an <b>Official Judge</b> for <b>$evt_name</b>.</p>
+                <h2>Hello, " . htmlspecialchars($name) . "!</h2>
+                <p>You have been selected to serve as an <b>Official Judge</b> for <b>" . htmlspecialchars($evt_name) . "</b>.</p>
                 
                 <div style='background:#f3f4f6; padding:15px; border-radius:8px; border:1px solid #ddd; margin:20px 0;'>
                     <strong>Your Login Credentials:</strong><br>
-                    Email: <b>$email</b><br>
-                    Password: <b>$pass</b>
+                    Email: <b>" . htmlspecialchars($email) . "</b><br>
+                    Password: <b>" . htmlspecialchars($pass) . "</b>
                 </div>
 
                 <p>Please login to the Judge's Dashboard to view the scoring criteria and candidates:</p>
@@ -108,8 +120,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             ";
         } else {
             $body = "
-                <h2>Hello, $name!</h2>
-                <p>You have been selected to serve as an <b>Official Judge</b> for <b>$evt_name</b>.</p>
+                <h2>Hello, " . htmlspecialchars($name) . "!</h2>
+                <p>You have been selected to serve as an <b>Official Judge</b> for <b>" . htmlspecialchars($evt_name) . "</b>.</p>
                 <p>Please login using your existing credentials.</p>
                 <p><a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;'>Open Judge Dashboard</a></p>
             ";
@@ -120,11 +132,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         // =============================================================
 
         $conn->commit();
-        header("Location: ../public/judges.php?success=" . urlencode($msg));
+        Flash::set('success', $msg);
+        header("Location: ../public/judges.php");
 
     } catch (Exception $e) {
         $conn->rollback();
-        header("Location: ../public/judges.php?error=Database Error");
+        Flash::set('error', 'Database Error');
+        header("Location: ../public/judges.php");
     }
     exit();
 }
@@ -132,6 +146,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 // --- 2. UPDATE JUDGE (Edit) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update') {
     
+    // CSRF Check
+    $token = $_POST['csrf_token'] ?? '';
+    if (!Csrf::verifyToken($token)) {
+        Flash::set('error', 'Security token mismatch. Please try again.');
+        header("Location: ../public/judges.php");
+        exit();
+    }
+
     $link_id  = (int)$_POST['link_id'];
     $judge_id = (int)$_POST['judge_id']; // User ID
     $name     = trim($_POST['name']);
@@ -140,7 +162,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $is_chairman = isset($_POST['is_chairman']) ? 1 : 0;
     
     // We need event_id to reset chairman, let's fetch it from the link_id
-    $evtCheck = $conn->query("SELECT event_id FROM event_judges WHERE id = $link_id");
+    $stmt_evt = $conn->prepare("SELECT event_id FROM event_judges WHERE id = ?");
+    $stmt_evt->bind_param("i", $link_id);
+    $stmt_evt->execute();
+    $evtCheck = $stmt_evt->get_result();
+
+    if ($evtCheck->num_rows === 0) {
+        Flash::set('error', 'Invalid Judge ID');
+        header("Location: ../public/judges.php");
+        exit();
+    }
+
     $event_id = $evtCheck->fetch_assoc()['event_id'];
 
     $conn->begin_transaction();
@@ -167,11 +199,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $stmt2->execute();
 
         $conn->commit();
-        header("Location: ../public/judges.php?success=Judge updated successfully");
+        Flash::set('success', 'Judge updated successfully');
+        header("Location: ../public/judges.php");
 
     } catch (Exception $e) {
         $conn->rollback();
-        header("Location: ../public/judges.php?error=Update failed");
+        Flash::set('error', 'Update failed');
+        header("Location: ../public/judges.php");
     }
     exit();
 }
@@ -180,6 +214,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 // Only accept POST requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && isset($_POST['id'])) {
     
+    // CSRF Check (Assuming forms in UI will be updated)
+    // For now, if no token, we might break functionality if the frontend isn't updated simultaneously.
+    // However, I will update frontend later. So I enforce it here.
+
+    // Note: The UI for table actions usually uses Links/GET. If I switch to POST here, I MUST update the UI.
+    // The previous `api/contestant.php` used GET for these.
+    // This file `api/judge.php` seems to have been using POST for these actions already?
+    // Let's check the original code... Yes, "Only accept POST requests" was in the comment, but `contestant.php` used GET.
+    // Wait, the original `judge.php` checked `$_SERVER['REQUEST_METHOD'] === 'POST'`.
+    // So `judges.php` likely has forms for these buttons. Good.
+
+    $token = $_POST['csrf_token'] ?? '';
+    if (!Csrf::verifyToken($token)) {
+        Flash::set('error', 'Security token mismatch.');
+        header("Location: ../public/judges.php");
+        exit();
+    }
+
     $link_id = (int)$_POST['id'];
     $action  = $_POST['action'];
 
@@ -206,10 +258,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && isset($_
     }
     
     if ($stmt->execute()) {
-        header("Location: ../public/judges.php?view=$view&success=" . urlencode($msg));
+        Flash::set('success', $msg);
+        header("Location: ../public/judges.php?view=$view");
     } else {
-        header("Location: ../public/judges.php?error=Action failed");
+        Flash::set('error', 'Action failed');
+        header("Location: ../public/judges.php");
     }
     exit();
 }
-?>

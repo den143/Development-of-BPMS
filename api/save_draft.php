@@ -1,5 +1,7 @@
 <?php
 session_start();
+header('Content-Type: application/json');
+
 require_once __DIR__ . '/../app/config/database.php';
 require_once __DIR__ . '/../app/core/guard.php';
 
@@ -19,9 +21,14 @@ if (!$data) {
 }
 
 $judge_id = $_SESSION['user_id'];
-$round_id = (int)$data['round_id'];
-$contestant_id = (int)$data['contestant_id'];
+$round_id = (int)($data['round_id'] ?? 0);
+$contestant_id = (int)($data['contestant_id'] ?? 0);
 $segment_id_input = (int)($data['segment_id'] ?? 0);
+
+if ($round_id <= 0 || $contestant_id <= 0) {
+    echo json_encode(['error' => 'Invalid Data']);
+    exit();
+}
 
 $conn->begin_transaction();
 try {
@@ -29,32 +36,37 @@ try {
     // OPTIMIZATION 1: Fetch all Criteria Limits in ONE Query
     // ---------------------------------------------------------
     $criteria_limits = [];
-    if (isset($data['scores']) && !empty($data['scores'])) {
+    if (isset($data['scores']) && is_array($data['scores']) && !empty($data['scores'])) {
         // Extract all criteria IDs from the input
         $crit_ids = array_keys($data['scores']);
         
-        // Convert array to comma-separated string for SQL (safe because we cast to int later)
-        $ids_placeholder = implode(',', array_fill(0, count($crit_ids), '?'));
-        
-        // Fetch max_score and segment_id for ALL sent criteria
-        $sql = "SELECT id, segment_id, max_score FROM criteria WHERE id IN ($ids_placeholder)";
-        $stmt_limits = $conn->prepare($sql);
-        
-        // Dynamically bind params
-        $types = str_repeat('i', count($crit_ids));
-        $stmt_limits->bind_param($types, ...$crit_ids);
-        $stmt_limits->execute();
-        $res = $stmt_limits->get_result();
-        
-        while ($row = $res->fetch_assoc()) {
-            $criteria_limits[$row['id']] = $row;
+        // FIX: Use is_numeric because json_decode returns keys as strings
+        $crit_ids = array_filter($crit_ids, 'is_numeric');
+
+        if (!empty($crit_ids)) {
+            // Create placeholders: ?,?,?
+            $ids_placeholder = implode(',', array_fill(0, count($crit_ids), '?'));
+
+            // Fetch max_score and segment_id for ALL sent criteria
+            $sql = "SELECT id, segment_id, max_score FROM criteria WHERE id IN ($ids_placeholder)";
+            $stmt_limits = $conn->prepare($sql);
+
+            // Dynamically bind params
+            $types = str_repeat('i', count($crit_ids));
+            $stmt_limits->bind_param($types, ...$crit_ids);
+            $stmt_limits->execute();
+            $res = $stmt_limits->get_result();
+
+            while ($row = $res->fetch_assoc()) {
+                $criteria_limits[$row['id']] = $row;
+            }
         }
     }
 
     // ---------------------------------------------------------
     // 2. Save Scores (Loop using cached limits)
     // ---------------------------------------------------------
-    if (isset($data['scores'])) {
+    if (isset($data['scores']) && is_array($data['scores'])) {
         $stmt = $conn->prepare("INSERT INTO scores (round_id, segment_id, criteria_id, judge_id, contestant_id, score_value) 
                                 VALUES (?, ?, ?, ?, ?, ?) 
                                 ON DUPLICATE KEY UPDATE score_value = VALUES(score_value)");
@@ -81,11 +93,15 @@ try {
     // 3. Save Comment
     // ---------------------------------------------------------
     if (isset($data['comment'])) {
+        $comment = trim($data['comment']);
+        // Sanitize? Prepared statement handles SQL injection.
+        // We will sanitize output when displaying (htmlspecialchars).
+
         $stmt_c = $conn->prepare("INSERT INTO segment_comments (round_id, segment_id, judge_id, contestant_id, comment_text) 
                                   VALUES (?, ?, ?, ?, ?) 
                                   ON DUPLICATE KEY UPDATE comment_text = VALUES(comment_text)");
-        // Use input segment_id, but logically it should match the criteria's segment
-        $stmt_c->bind_param("iiiis", $round_id, $segment_id_input, $judge_id, $contestant_id, $data['comment']);
+
+        $stmt_c->bind_param("iiiis", $round_id, $segment_id_input, $judge_id, $contestant_id, $comment);
         $stmt_c->execute();
     }
 

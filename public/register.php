@@ -1,6 +1,8 @@
 <?php
 session_start();
 require_once __DIR__ . '/../app/config/database.php';
+require_once __DIR__ . '/../app/core/flash.php';
+require_once __DIR__ . '/../app/core/csrf.php';
 
 // Fetch Active Events
 $events = [];
@@ -8,9 +10,6 @@ $result = $conn->query("SELECT id, name FROM events WHERE status = 'Active'");
 if ($result) {
     $events = $result->fetch_all(MYSQLI_ASSOC);
 }
-
-$error = $_GET['error'] ?? null;
-$success = $_GET['success'] ?? null;
 ?>
 
 <!DOCTYPE html>
@@ -180,16 +179,17 @@ $success = $_GET['success'] ?? null;
                 <p>Please fill in your details correctly.</p>
             </div>
 
-            <?php if ($error): ?>
-                <div class="alert alert-error"><?= htmlspecialchars($error) ?></div>
-            <?php elseif ($success): ?>
+            <?php if (Flash::has('error')): ?>
+                <div class="alert alert-error"><?= htmlspecialchars(Flash::get('error')) ?></div>
+            <?php elseif (Flash::has('success')): ?>
                 <div class="alert alert-success">
-                    <?= htmlspecialchars($success) ?>
+                    <?= htmlspecialchars(Flash::get('success')) ?>
                     <br><a href="index.php" style="font-weight:bold; color:inherit; text-decoration:underline;">Return to Login</a>
                 </div>
             <?php endif; ?>
 
             <form action="../api/register_contestant.php" method="POST" enctype="multipart/form-data">
+                <?php Csrf::renderInput(); ?>
                 
                 <div class="form-grid">
                     

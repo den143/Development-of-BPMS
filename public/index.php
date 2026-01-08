@@ -1,38 +1,26 @@
 <?php
 session_start();
+require_once __DIR__ . '/../app/core/flash.php';
+require_once __DIR__ . '/../app/core/csrf.php';
 
 // Redirect logged-in users
 if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
-    // NEW: Audience Redirect
     if ($_SESSION['role'] === 'Audience') {
         header("Location: ./audience_dashboard.php");
         exit();
     }
 
     switch ($_SESSION['role']) {
-        case 'Event Manager':
-            header("Location: ./dashboard.php");
-            break;
-        case 'Judge Coordinator':
-            header("Location: ./judge_coordinator.php");
-            break;
-        case 'Contestant Manager':
-            header("Location: ./contestant_manager.php"); 
-            break;
-        case 'Tabulator':
-            header("Location: ./tabulator.php"); 
-            break;
-        case 'Contestant':
-            header("Location: ./contestant_dashboard.php"); 
-            break;
-        default:
-            header("Location: ./logout.php");
-            break;
+        case 'Event Manager':      header("Location: ./dashboard.php"); break;
+        case 'Judge Coordinator':  header("Location: ./judge_coordinator.php"); break;
+        case 'Contestant Manager': header("Location: ./contestant_manager.php"); break;
+        case 'Tabulator':          header("Location: ./tabulator.php"); break;
+        case 'Contestant':         header("Location: ./contestant_dashboard.php"); break;
+        case 'Judge':              header("Location: ./judge_dashboard.php"); break;
+        default:                   header("Location: ./logout.php"); break;
     }
     exit();
 }
-
-$error = $_GET['error'] ?? null;
 ?>
 
 <!DOCTYPE html>
@@ -97,17 +85,11 @@ $error = $_GET['error'] ?? null;
         .alert-error { background-color: #fee2e2; color: #dc2626; padding: 12px; border-radius: 8px; font-size: 14px; margin-bottom: 20px; text-align: center; border: 1px solid #fecaca; display: flex; align-items: center; justify-content: center; gap: 8px; }
         .toggle-password { position: absolute; right: 15px; top: 50%; transform: translateY(-50%); cursor: pointer; color: #9ca3af; }
 
-        /* NEW STYLES FOR TOGGLE */
         .hidden { display: none; }
         .audience-section { margin-top: 15px; text-align: center; }
         .audience-btn { background: none; border: none; color: #059669; font-weight: 700; cursor: pointer; text-decoration: underline; font-size: 14px; }
         .audience-btn:hover { color: #047857; }
         
-        /* NEW: Demo Link Style */
-        .demo-mode-link { margin-top: 15px; padding-top: 10px; border-top: 1px dashed #d1d5db; text-align: center; }
-        .demo-mode-link a { color: #ef4444; font-size: 13px; font-weight: 700; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
-        .demo-mode-link a:hover { text-decoration: underline; color: #dc2626; }
-
         @media (max-width: 900px) {
             body { flex-direction: column; overflow-y: auto; }
             .brand-section { width: 100%; min-height: auto; padding: 15px 20px; flex-direction: row; justify-content: space-between; align-items: center; text-align: left; background: #111827; flex-shrink: 0; }
@@ -143,9 +125,9 @@ $error = $_GET['error'] ?? null;
     <div class="login-section">
         <div class="login-card">
             
-            <?php if ($error): ?>
+            <?php if (Flash::has('error')): ?>
                 <div class="alert-error">
-                    <i class="fas fa-exclamation-circle"></i> <?= htmlspecialchars($error) ?>
+                    <i class="fas fa-exclamation-circle"></i> <?= htmlspecialchars(Flash::get('error')) ?>
                 </div>
             <?php endif; ?>
 
@@ -156,6 +138,8 @@ $error = $_GET['error'] ?? null;
                 </div>
 
                 <form action="../api/auth.php" method="POST">
+                    <?php Csrf::renderInput(); ?>
+
                     <div class="input-group">
                         <label>Select Role</label>
                         <div class="input-wrapper">
@@ -202,12 +186,6 @@ $error = $_GET['error'] ?? null;
                 <div class="audience-section">
                     Watching the show? <button class="audience-btn" onclick="toggleAudience(true)">Enter Ticket Code</button>
                 </div>
-
-                <div class="demo-mode-link">
-                    <a href="demo_access.php">
-                        <i class="fas fa-flask"></i> Enter Research Demo Mode
-                    </a>
-                </div>
             </div>
 
             <div id="audience-form" class="hidden">
@@ -217,6 +195,7 @@ $error = $_GET['error'] ?? null;
                 </div>
 
                 <form action="../api/auth_ticket.php" method="POST">
+                    <?php Csrf::renderInput(); ?>
                     <div class="input-group">
                         <label>Ticket Code</label>
                         <div class="input-wrapper">
@@ -257,7 +236,6 @@ $error = $_GET['error'] ?? null;
             }
         }
 
-        // Script to toggle forms
         function toggleAudience(showAudience) {
             const staffForm = document.getElementById('staff-form');
             const audienceForm = document.getElementById('audience-form');

@@ -3,10 +3,20 @@ require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
 requireRole(['Event Manager', 'Contestant Manager']);
 require_once __DIR__ . '/../app/config/database.php';
+require_once __DIR__ . '/../app/core/flash.php';
+require_once __DIR__ . '/../app/core/csrf.php';
 
 // --- HANDLE POST REQUESTS (Create OR Update) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
+    // CSRF Check
+    $token = $_POST['csrf_token'] ?? '';
+    if (!Csrf::verifyToken($token)) {
+        Flash::set('error', 'Security token mismatch. Please try again.');
+        header("Location: ../public/contestants.php");
+        exit();
+    }
+
     $action = $_POST['action'] ?? 'create';
     $event_id = (int)$_POST['event_id'];
     $name     = trim($_POST['name']);
@@ -24,13 +34,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pass = trim($_POST['password']);
         
         if (!isset($_FILES['photo']) || $_FILES['photo']['error'] !== 0) {
-            header("Location: ../public/contestants.php?error=Photo is required");
+            Flash::set('error', 'Photo is required');
+            header("Location: ../public/contestants.php");
             exit();
         }
 
         $photo_name = uploadPhoto($_FILES['photo']);
         if (!$photo_name) {
-            header("Location: ../public/contestants.php?error=Photo upload failed");
+            Flash::set('error', 'Photo upload failed or invalid file type');
+            header("Location: ../public/contestants.php");
             exit();
         }
 
@@ -49,24 +61,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt2->bind_param("iiisssss", $user_id, $event_id, $age, $height, $vital_stats, $hometown, $motto, $photo_name);
             $stmt2->execute();
             
-            // Send Email (Keep your existing logic here)
+            // Send Email
             require_once __DIR__ . '/../app/core/CustomMailer.php';
-            $site_link = "http://YOUR-SUBDOMAIN.rf.gd/bpms/public/index.php"; 
+            // Note: Ideally this URL should be in a config
+            $site_link = "http://" . $_SERVER['HTTP_HOST'] . "/bpms/public/index.php";
+
+            // Fetch Event Name safely
             $evt_name = "the Pageant";
-            $e_query = $conn->query("SELECT name FROM events WHERE id = $event_id");
-            if ($row = $e_query->fetch_assoc()) $evt_name = $row['name'];
+            $stmt_e = $conn->prepare("SELECT name FROM events WHERE id = ?");
+            $stmt_e->bind_param("i", $event_id);
+            $stmt_e->execute();
+            $res_e = $stmt_e->get_result();
+            if ($row = $res_e->fetch_assoc()) $evt_name = $row['name'];
 
             $subject = "Official Contestant Registration";
-            $body = "<h2>Welcome, $name!</h2><p>You have been registered for <b>$evt_name</b>.</p><div style='background:#f3f4f6; padding:15px; border-radius:8px; margin:20px 0;'><strong>Credentials:</strong><br>Email: <b>$email</b><br>Password: <b>$pass</b></div><p><a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;'>Login Now</a></p>";
+            $body = "<h2>Welcome, " . htmlspecialchars($name) . "!</h2>
+                     <p>You have been registered for <b>" . htmlspecialchars($evt_name) . "</b>.</p>
+                     <div style='background:#f3f4f6; padding:15px; border-radius:8px; margin:20px 0;'>
+                        <strong>Credentials:</strong><br>
+                        Email: <b>" . htmlspecialchars($email) . "</b><br>
+                        Password: <b>" . htmlspecialchars($pass) . "</b>
+                     </div>
+                     <p><a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;'>Login Now</a></p>";
             
             sendCustomEmail($email, $subject, $body);
 
             $conn->commit();
-            header("Location: ../public/contestants.php?success=Contestant added successfully");
+            Flash::set('success', 'Contestant added successfully');
+            header("Location: ../public/contestants.php");
 
         } catch (Exception $e) {
             $conn->rollback();
-            header("Location: ../public/contestants.php?error=Database Error: " . $e->getMessage());
+            Flash::set('error', 'Database Error: ' . $e->getMessage());
+            header("Location: ../public/contestants.php");
         }
     } 
 
@@ -102,11 +129,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $stmt2->execute();
             $conn->commit();
-            header("Location: ../public/contestants.php?success=Contestant updated");
+            Flash::set('success', 'Contestant updated');
+            header("Location: ../public/contestants.php");
 
         } catch (Exception $e) {
             $conn->rollback();
-            header("Location: ../public/contestants.php?error=Update Failed");
+            Flash::set('error', 'Update Failed');
+            header("Location: ../public/contestants.php");
         }
     }
     exit();
@@ -114,11 +143,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Helper Function
 function uploadPhoto($file) {
+    // Validate mime type
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mime = finfo_file($finfo, $file['tmp_name']);
+    finfo_close($finfo);
+
+    $allowed_mimes = ['image/jpeg', 'image/png'];
+    if (!in_array($mime, $allowed_mimes)) return false;
+
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     $allowed = ['jpg', 'jpeg', 'png'];
     if (in_array($ext, $allowed)) {
         $new_name = "contestant_" . time() . "." . $ext;
-        $target = __DIR__ . '/../public/assets/uploads/contestants/' . $new_name;
+        $target_dir = __DIR__ . '/../public/assets/uploads/contestants/';
+        if (!is_dir($target_dir)) mkdir($target_dir, 0755, true);
+
+        $target = $target_dir . $new_name;
         if (move_uploaded_file($file['tmp_name'], $target)) {
             return $new_name;
         }
@@ -129,11 +169,17 @@ function uploadPhoto($file) {
 // --- HANDLE GET ACTIONS (Approve / Reject / Remove / Restore / Delete) ---
 if (isset($_GET['action']) && isset($_GET['id'])) {
     
+    // CSRF for GET? Usually we prefer POST forms for actions.
+    // Given the constraints and existing code, we will enforce minimal check if possible,
+    // but typically links in tables are GET. We will trust the auth guard + ID check for now,
+    // as converting all table actions to Forms is a big UI change.
+    // Ideally, these should be POST forms with CSRF.
+
     $id = (int)$_GET['id'];
     $action = $_GET['action'];
     $my_id = $_SESSION['user_id'];
 
-    // Security Check
+    // Security Check: Ensure I have rights to this specific contestant's event
     $check_auth = $conn->prepare("
         SELECT u.id FROM users u
         JOIN contestant_details cd ON u.id = cd.user_id
@@ -145,29 +191,30 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     $check_auth->execute();
     
     if ($check_auth->get_result()->num_rows === 0) {
-        header("Location: ../public/contestants.php?error=Unauthorized Action");
+        Flash::set('error', 'Unauthorized Action');
+        header("Location: ../public/contestants.php");
         exit();
     }
 
     // --- ACTION LOGIC ---
     if ($action === 'delete') {
-        // SOFT DELETE: Hide from list completely
+        // SOFT DELETE
         $stmt = $conn->prepare("UPDATE contestant_details SET is_deleted = 1 WHERE user_id = ?");
         $stmt->bind_param("i", $id);
         $msg = "Contestant permanently removed from list.";
-        $tab = 'archived'; // Stay in archive view
+        $tab = 'archived';
 
     } elseif ($action === 'restore') {
-        // RESTORE: Active + Not Deleted
+        // RESTORE
         $conn->begin_transaction();
-        $conn->query("UPDATE users SET status = 'Active' WHERE id = $id");
+        $conn->query("UPDATE users SET status = 'Active' WHERE id = $id"); // Safe int cast via $id
         $conn->query("UPDATE contestant_details SET is_deleted = 0 WHERE user_id = $id");
         $conn->commit();
         $msg = "Contestant restored successfully.";
         $tab = 'archived';
 
     } elseif ($action === 'remove') {
-        // ARCHIVE: Set status Inactive
+        // ARCHIVE
         $stmt = $conn->prepare("UPDATE users SET status = 'Inactive' WHERE id = ?");
         $stmt->bind_param("i", $id);
         $msg = "Contestant moved to archive.";
@@ -178,26 +225,36 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         $stmt->bind_param("i", $id);
         $msg = "Application Approved";
         $tab = 'pending';
-        // Send Email (Approve)
+        // Send Email
         require_once __DIR__ . '/../app/core/CustomMailer.php';
-        $site_link = "http://YOUR-SUBDOMAIN.rf.gd/bpms/public/index.php"; 
-        $u_data = $conn->query("SELECT name, email FROM users WHERE id = $id")->fetch_assoc();
-        if ($u_data) sendCustomEmail($u_data['email'], "Application ACCEPTED", "<h2>Congrats {$u_data['name']}!</h2><p>Your application is accepted.</p><p><a href='$site_link'>Login</a></p>");
+        $site_link = "http://" . $_SERVER['HTTP_HOST'] . "/bpms/public/index.php";
+
+        $stmt_u = $conn->prepare("SELECT name, email FROM users WHERE id = ?");
+        $stmt_u->bind_param("i", $id);
+        $stmt_u->execute();
+        $u_data = $stmt_u->get_result()->fetch_assoc();
+
+        if ($u_data) sendCustomEmail($u_data['email'], "Application ACCEPTED", "<h2>Congrats " . htmlspecialchars($u_data['name']) . "!</h2><p>Your application is accepted.</p><p><a href='$site_link'>Login</a></p>");
 
     } elseif ($action === 'reject') {
         $stmt = $conn->prepare("UPDATE users SET status = 'Rejected' WHERE id = ?");
         $stmt->bind_param("i", $id);
         $msg = "Application Rejected";
         $tab = 'pending';
-        // Send Email (Reject)
+        // Send Email
         require_once __DIR__ . '/../app/core/CustomMailer.php';
-        $u_data = $conn->query("SELECT name, email FROM users WHERE id = $id")->fetch_assoc();
+        $stmt_u = $conn->prepare("SELECT name, email FROM users WHERE id = ?");
+        $stmt_u->bind_param("i", $id);
+        $stmt_u->execute();
+        $u_data = $stmt_u->get_result()->fetch_assoc();
+
         if ($u_data) sendCustomEmail($u_data['email'], "Application Update", "<p>Sorry, your application was not accepted.</p>");
     }
 
     if (isset($stmt)) $stmt->execute();
     
-    header("Location: ../public/contestants.php?view=$tab&success=" . urlencode($msg));
+    Flash::set('success', $msg);
+    header("Location: ../public/contestants.php?view=$tab");
     exit();
 }
 ?>
