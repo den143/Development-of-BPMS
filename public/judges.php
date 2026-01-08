@@ -3,6 +3,8 @@ require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
 requireRole('Event Manager');
 require_once __DIR__ . '/../app/config/database.php';
+require_once __DIR__ . '/../app/core/flash.php';
+require_once __DIR__ . '/../app/core/csrf.php';
 
 $manager_id = $_SESSION['user_id'];
 $view = $_GET['view'] ?? 'active'; 
@@ -163,6 +165,7 @@ if ($active_event) {
                                                     </button>
                                                     
                                                     <form action="../api/resend_email.php" method="POST" style="margin:0;" onsubmit="return confirm('Send a reminder email? (Password will NOT be changed)');">
+                                                        <?php Csrf::renderInput(); ?>
                                                         <input type="hidden" name="user_id" value="<?= $j['judge_id'] ?>">
                                                         <input type="hidden" name="action_type" value="reminder">
                                                         <button type="submit" class="icon-btn btn-reminder" title="Send Login Reminder">
@@ -171,6 +174,7 @@ if ($active_event) {
                                                     </form>
 
                                                     <form action="../api/resend_email.php" method="POST" style="margin:0;" onsubmit="return confirm('WARNING: This will RESET the password and email the new one. Proceed?');">
+                                                        <?php Csrf::renderInput(); ?>
                                                         <input type="hidden" name="user_id" value="<?= $j['judge_id'] ?>">
                                                         <input type="hidden" name="action_type" value="reset">
                                                         <button type="submit" class="icon-btn btn-reset" title="Reset Password & Email">
@@ -206,6 +210,7 @@ if ($active_event) {
     </div>
 
     <form id="actionForm" action="../api/judge.php" method="POST" style="display:none;">
+        <?php Csrf::renderInput(); ?>
         <input type="hidden" name="action" id="formAction">
         <input type="hidden" name="id" id="formId">
     </form>
@@ -214,6 +219,7 @@ if ($active_event) {
         <div class="modal-content">
             <h3 style="margin-bottom:20px; color:#111827;">Add New Judge</h3>
             <form action="../api/judge.php" method="POST">
+                <?php Csrf::renderInput(); ?>
                 <input type="hidden" name="action" value="add">
                 <input type="hidden" name="event_id" value="<?= $active_event['id'] ?? '' ?>">
                 <div class="form-group"><label style="font-size:13px; font-weight:600; color:#374151;">Full Name</label><input type="text" name="name" class="form-control" required></div>
@@ -239,6 +245,7 @@ if ($active_event) {
         <div class="modal-content">
             <h3 style="margin-bottom:20px; color:#111827;">Edit Judge</h3>
             <form action="../api/judge.php" method="POST">
+                <?php Csrf::renderInput(); ?>
                 <input type="hidden" name="action" value="update">
                 <input type="hidden" name="link_id" id="edit_link_id">
                 <input type="hidden" name="judge_id" id="edit_judge_id">
@@ -311,13 +318,12 @@ if ($active_event) {
             setTimeout(() => { toast.remove(); }, 3500);
         }
         
-        const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.has('success')) showToast(urlParams.get('success'), 'success');
-        if (urlParams.has('error')) showToast(urlParams.get('error'), 'error');
-        if (urlParams.has('success') || urlParams.has('error')) {
-            const newUrl = window.location.pathname + (urlParams.has('view') ? '?view=' + urlParams.get('view') : '');
-            window.history.replaceState({}, document.title, newUrl);
-        }
+        <?php if (Flash::has('success')): ?>
+            showToast("<?= htmlspecialchars(Flash::get('success')) ?>", 'success');
+        <?php endif; ?>
+        <?php if (Flash::has('error')): ?>
+            showToast("<?= htmlspecialchars(Flash::get('error')) ?>", 'error');
+        <?php endif; ?>
     </script>
 </body>
 </html>

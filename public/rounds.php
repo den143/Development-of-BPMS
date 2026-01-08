@@ -3,6 +3,8 @@ require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
 requireRole('Event Manager');
 require_once __DIR__ . '/../app/config/database.php';
+require_once __DIR__ . '/../app/core/flash.php';
+require_once __DIR__ . '/../app/core/csrf.php';
 
 $manager_id = $_SESSION['user_id'];
 
@@ -146,9 +148,16 @@ if ($active_event) {
                                     <button class="btn-icon" onclick='openEditModal(<?= json_encode($r) ?>)' title="Edit">
                                         <i class="fas fa-pen"></i>
                                     </button>
-                                    <a href="../api/rounds.php?action=delete&id=<?= $r['id'] ?>" class="btn-icon" style="color:#dc2626;" onclick="return confirm('Delete this round?')" title="Delete">
-                                        <i class="fas fa-trash"></i>
-                                    </a>
+
+                                    <!-- SECURE DELETE via Form -->
+                                    <form action="../api/rounds.php" method="POST" style="margin:0;" onsubmit="return confirm('Delete this round?');">
+                                        <?php Csrf::renderInput(); ?>
+                                        <input type="hidden" name="action" value="delete">
+                                        <input type="hidden" name="id" value="<?= $r['id'] ?>">
+                                        <button type="submit" class="btn-icon" style="color:#dc2626;" title="Delete">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </form>
 
                                 <?php elseif ($r['status'] === 'Active'): ?>
                                     <button onclick="controlRound(<?= $r['id'] ?>, 'lock')" class="btn-control btn-lock">
@@ -191,6 +200,7 @@ if ($active_event) {
         <?php endif; ?>
 
         <form action="../api/rounds.php" method="POST" id="roundForm">
+            <?php Csrf::renderInput(); ?>
             <input type="hidden" name="action" id="formAction" value="add">
             <input type="hidden" name="event_id" value="<?= $active_event['id'] ?? '' ?>">
             <input type="hidden" name="round_id" id="round_id">
@@ -286,6 +296,8 @@ if ($active_event) {
         const formData = new FormData();
         formData.append('action', action);
         formData.append('round_id', id);
+        // ADD CSRF
+        formData.append('csrf_token', '<?= Csrf::generateToken() ?>');
 
         try {
             const req = await fetch('../api/rounds.php', { method: 'POST', body: formData });
@@ -315,11 +327,16 @@ if ($active_event) {
         container.appendChild(toast);
         setTimeout(() => { toast.remove(); }, 3500);
     }
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.has('success')) showToast(urlParams.get('success'), 'success');
-    if (urlParams.has('error')) showToast(urlParams.get('error'), 'error');
+
+    <?php if (Flash::has('success')): ?>
+        showToast("<?= htmlspecialchars(Flash::get('success')) ?>", 'success');
+    <?php endif; ?>
+    <?php if (Flash::has('error')): ?>
+        showToast("<?= htmlspecialchars(Flash::get('error')) ?>", 'error');
+    <?php endif; ?>
     
     // Clean URL
+    const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.has('success') || urlParams.has('error')) {
         const newUrl = window.location.pathname;
         window.history.replaceState({}, document.title, newUrl);

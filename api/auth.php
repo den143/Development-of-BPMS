@@ -1,19 +1,30 @@
 <?php
 session_start();
 require_once __DIR__ . '/../app/config/database.php';
+require_once __DIR__ . '/../app/core/flash.php';
+require_once __DIR__ . '/../app/core/csrf.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+    // 1. Validate CSRF
+    $token = $_POST['csrf_token'] ?? '';
+    if (!Csrf::verifyToken($token)) {
+        Flash::set('error', 'Session expired or invalid request. Please reload.');
+        header("Location: ../public/index.php");
+        exit();
+    }
 
     $email = trim($_POST['email'] ?? '');
     $pass  = trim($_POST['password'] ?? '');
     $role  = trim($_POST['role'] ?? '');
 
     if (empty($email) || empty($pass) || empty($role)) {
-        header("Location: ../public/index.php?error=All fields are required");
+        Flash::set('error', 'All fields are required');
+        header("Location: ../public/index.php");
         exit();
     }
 
-    // 1. Fetch user
+    // 2. Fetch user
     $stmt = $conn->prepare("SELECT * FROM users WHERE email = ? AND role = ?");
     $stmt->bind_param("ss", $email, $role);
     $stmt->execute();
@@ -22,23 +33,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($result->num_rows === 1) {
         $row = $result->fetch_assoc();
         
-        // 2. CHECK PASSWORD
+        // 3. CHECK PASSWORD
         if (password_verify($pass, $row['password'])) {
             
-            // 3. CHECK ACCOUNT STATUS
+            // 4. CHECK ACCOUNT STATUS
             if ($row['status'] === 'Pending') {
-                header("Location: ../public/index.php?error=Your application is still pending approval.");
+                Flash::set('error', 'Your application is still pending approval.');
+                header("Location: ../public/index.php");
                 exit();
             } elseif ($row['status'] === 'Rejected') {
-                header("Location: ../public/index.php?error=Your application was rejected.");
+                Flash::set('error', 'Your application was rejected.');
+                header("Location: ../public/index.php");
                 exit();
             } elseif ($row['status'] === 'Inactive') {
-                header("Location: ../public/index.php?error=Your account is deactivated.");
+                Flash::set('error', 'Your account is deactivated.');
+                header("Location: ../public/index.php");
                 exit();
             }
 
             // ============================================================
-            // 4. [NEW] CHECK IF LINKED EVENT IS ACTIVE
+            // 5. CHECK IF LINKED EVENT IS ACTIVE
             // ============================================================
             if ($role !== 'Event Manager') {
                 $u_id = $row['id'];
@@ -63,7 +77,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } 
                 // B. Check for JUDGES
                 elseif ($role === 'Judge') {
-                    // Must be linked to an Active Event AND have Active status in that event
                     $j_check = $conn->prepare("
                         SELECT ej.id FROM event_judges ej 
                         JOIN events e ON ej.event_id = e.id 
@@ -73,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $j_check->execute();
                     if ($j_check->get_result()->num_rows > 0) $has_active_event = true;
                 }
-                // C. Check for ORGANIZERS (Coordinators, Tabulators, etc.)
+                // C. Check for ORGANIZERS
                 elseif (in_array($role, ['Judge Coordinator', 'Contestant Manager', 'Tabulator'])) {
                     $o_check = $conn->prepare("
                         SELECT eo.id FROM event_organizers eo 
@@ -85,29 +98,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($o_check->get_result()->num_rows > 0) $has_active_event = true;
                 }
 
-                // IF NO ACTIVE EVENT FOUND -> BLOCK LOGIN
                 if (!$has_active_event) {
-                    header("Location: ../public/index.php?error=Access Denied: The event you are assigned to is not currently active.");
+                    Flash::set('error', 'Access Denied: The event you are assigned to is not currently active.');
+                    header("Location: ../public/index.php");
                     exit();
                 }
             }
-            // ============================================================
 
-
-            // 5. PROCEED TO LOGIN
+            // 6. PROCEED TO LOGIN
             $_SESSION['user_id'] = $row['id'];
             $_SESSION['email']   = $row['email'];
             $_SESSION['role']    = $row['role'];
             $_SESSION['name']    = $row['name'];
 
-            // Special Logic for Event Manager Modal
             if ($role === 'Event Manager') {
                 $u_id = $row['id'];
-                $check_event = $conn->query("SELECT id FROM events WHERE user_id = '$u_id'");
-                $_SESSION['show_modal'] = ($check_event->num_rows == 0);
+                // Use prepared statement here too for consistency, though user_id is integer from DB
+                $check_event = $conn->prepare("SELECT id FROM events WHERE user_id = ?");
+                $check_event->bind_param("i", $u_id);
+                $check_event->execute();
+                $_SESSION['show_modal'] = ($check_event->get_result()->num_rows == 0);
             }
 
-            // 6. REDIRECT BASED ON ROLE
+            // 7. REDIRECT BASED ON ROLE
             switch ($role) {
                 case 'Event Manager':
                     header("Location: ../public/dashboard.php");
@@ -125,20 +138,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     header("Location: ../public/contestant_dashboard.php");
                     break;
                 case 'Judge':
-                    header("Location: ../public/judge_dashboard.php"); // Future
+                    header("Location: ../public/judge_dashboard.php");
                     break;
                 default:
-                    header("Location: ../public/index.php?error=Role configuration error");
+                    Flash::set('error', 'Role configuration error');
+                    header("Location: ../public/index.php");
                     break;
             }
             exit();
 
         } else {
-            header("Location: ../public/index.php?error=Incorrect Password");
+            Flash::set('error', 'Incorrect Password');
+            header("Location: ../public/index.php");
             exit();
         }
     } else {
-        header("Location: ../public/index.php?error=User not found or Role incorrect");
+        Flash::set('error', 'User not found or Role incorrect');
+        header("Location: ../public/index.php");
         exit();
     }
 } else {

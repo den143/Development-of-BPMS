@@ -3,6 +3,8 @@ require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
 requireRole('Event Manager');
 require_once __DIR__ . '/../app/config/database.php';
+require_once __DIR__ . '/../app/core/flash.php';
+require_once __DIR__ . '/../app/core/csrf.php';
 
 // 1. Fetch Active Event for this Manager
 $manager_id = $_SESSION['user_id'];
@@ -61,11 +63,6 @@ if ($event_id) {
     $r_stmt->execute();
     $count_rounds = $r_stmt->get_result()->fetch_assoc()['total'];
 }
-
-// Capture session messages
-$success = $_SESSION['success'] ?? null;
-$error   = $_SESSION['error'] ?? null;
-unset($_SESSION['success'], $_SESSION['error'], $_SESSION['show_modal']);
 ?>
 
 <!DOCTYPE html>
@@ -280,6 +277,7 @@ unset($_SESSION['success'], $_SESSION['error'], $_SESSION['show_modal']);
             <h2>Create New Event</h2>
             <p>Please setup your event details to proceed.</p>
             <form action="../api/event.php" method="POST">
+                <?php Csrf::renderInput(); ?>
                 <input type="text" name="event_name" placeholder="Event Name (e.g., Miss Universe 2025)" required>
                 <input type="date" name="event_date" required>
                 <input type="text" name="venue" placeholder="Venue" required>
@@ -304,8 +302,12 @@ unset($_SESSION['success'], $_SESSION['error'], $_SESSION['show_modal']);
             }, 3000);
         }
 
-        <?php if ($success): ?> showToast("<?= htmlspecialchars($success) ?>", "success"); <?php endif; ?>
-        <?php if ($error): ?> showToast("<?= htmlspecialchars($error) ?>", "error"); <?php endif; ?>
+        <?php if (Flash::has('success')): ?>
+            showToast("<?= htmlspecialchars(Flash::get('success')) ?>", "success");
+        <?php endif; ?>
+        <?php if (Flash::has('error')): ?>
+            showToast("<?= htmlspecialchars(Flash::get('error')) ?>", "error");
+        <?php endif; ?>
     </script>
 
 </body>
