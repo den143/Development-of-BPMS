@@ -1,4 +1,7 @@
 <?php
+// Purpose: Verifies user credentials, checks account status, and 
+// enforces "Gatekeeper" rules before redirecting to the correct dashboard.
+
 session_start();
 require_once __DIR__ . '/../app/config/database.php';
 
@@ -8,12 +11,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pass  = trim($_POST['password'] ?? '');
     $role  = trim($_POST['role'] ?? '');
 
+    // Basic Validation: Ensure no fields are empty
     if (empty($email) || empty($pass) || empty($role)) {
         header("Location: ../public/index.php?error=All fields are required");
         exit();
     }
 
-    // 1. Fetch user
+    // 1. FETCH USER
+    // We search for a user with the matching email AND the selected role.
     $stmt = $conn->prepare("SELECT * FROM users WHERE email = ? AND role = ?");
     $stmt->bind_param("ss", $email, $role);
     $stmt->execute();
@@ -22,10 +27,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($result->num_rows === 1) {
         $row = $result->fetch_assoc();
         
-        // 2. CHECK PASSWORD
+        // 2. VERIFY PASSWORD (HASHED)
         if (password_verify($pass, $row['password'])) {
             
             // 3. CHECK ACCOUNT STATUS
+            // Prevent login if the admin hasn't approved the account yet.
             if ($row['status'] === 'Pending') {
                 header("Location: ../public/index.php?error=Your application is still pending approval.");
                 exit();
@@ -37,14 +43,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit();
             }
 
-            // ============================================================
-            // 4. [NEW] CHECK IF LINKED EVENT IS ACTIVE
-            // ============================================================
+            // 4. GATEKEEPER LOGIC (Crucial Security Step)
+            // Even if the password is correct, we must ensure the user belongs to an 'Active' event.
+            // Note: 'Event Manager' is exempt because they create the events.
             if ($role !== 'Event Manager') {
                 $u_id = $row['id'];
                 $has_active_event = false;
 
-                // A. Check for CONTESTANTS
+                // A. For Contestants: Check if their assigned event is Active.
                 if ($role === 'Contestant') {
                     $c_check = $conn->prepare("
                         SELECT e.status 
@@ -61,9 +67,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         if ($evt['status'] === 'Active') $has_active_event = true;
                     }
                 } 
-                // B. Check for JUDGES
+                // B. For Judges: Check if they are assigned to an Active event AND are Active themselves.
                 elseif ($role === 'Judge') {
-                    // Must be linked to an Active Event AND have Active status in that event
                     $j_check = $conn->prepare("
                         SELECT ej.id FROM event_judges ej 
                         JOIN events e ON ej.event_id = e.id 
@@ -73,7 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $j_check->execute();
                     if ($j_check->get_result()->num_rows > 0) $has_active_event = true;
                 }
-                // C. Check for ORGANIZERS (Coordinators, Tabulators, etc.)
+                // C. For Staff (Coordinators, Tabulators): Similar check.
                 elseif (in_array($role, ['Judge Coordinator', 'Contestant Manager', 'Tabulator'])) {
                     $o_check = $conn->prepare("
                         SELECT eo.id FROM event_organizers eo 
@@ -85,29 +90,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($o_check->get_result()->num_rows > 0) $has_active_event = true;
                 }
 
-                // IF NO ACTIVE EVENT FOUND -> BLOCK LOGIN
+                // BLOCK ACCESS if no active event is found.
                 if (!$has_active_event) {
                     header("Location: ../public/index.php?error=Access Denied: The event you are assigned to is not currently active.");
                     exit();
                 }
             }
-            // ============================================================
 
-
-            // 5. PROCEED TO LOGIN
+            // 5. LOGIN SUCCESS: Set Session Variables
             $_SESSION['user_id'] = $row['id'];
             $_SESSION['email']   = $row['email'];
             $_SESSION['role']    = $row['role'];
             $_SESSION['name']    = $row['name'];
 
-            // Special Logic for Event Manager Modal
+            // Logic: Check if Event Manager needs to see the "Create Event" modal.
             if ($role === 'Event Manager') {
                 $u_id = $row['id'];
                 $check_event = $conn->query("SELECT id FROM events WHERE user_id = '$u_id'");
                 $_SESSION['show_modal'] = ($check_event->num_rows == 0);
             }
 
-            // 6. REDIRECT BASED ON ROLE
+            // 6. REDIRECT: Send user to their specific dashboard
             switch ($role) {
                 case 'Event Manager':
                     header("Location: ../public/dashboard.php");
@@ -125,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     header("Location: ../public/contestant_dashboard.php");
                     break;
                 case 'Judge':
-                    header("Location: ../public/judge_dashboard.php"); // Future
+                    header("Location: ../public/judge_dashboard.php"); 
                     break;
                 default:
                     header("Location: ../public/index.php?error=Role configuration error");
@@ -142,6 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit();
     }
 } else {
+    // Direct access to this file is not allowed
     header("Location: ../public/index.php");
     exit();
 }

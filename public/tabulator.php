@@ -1,13 +1,7 @@
 <?php
 require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
-
-// 1. CUSTOM ROLE CHECK (Allow both Event Manager AND Tabulator)
-if (!in_array($_SESSION['role'], ['Event Manager', 'Tabulator'])) {
-    header("Location: index.php");
-    exit();
-}
-
+requireRole(['Event Manager', 'Tabulator']);
 require_once __DIR__ . '/../app/config/database.php';
 
 $user_id = $_SESSION['user_id'];

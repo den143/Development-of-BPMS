@@ -26,9 +26,7 @@ function getRoundMetadata($conn, $round_id) {
     ];
 }
 
-// ==========================================================
 // GET REQUEST ONLY
-// ==========================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $round_id = isset($_GET['round_id']) ? (int)$_GET['round_id'] : 0;
     if ($round_id === 0) { echo json_encode(['error' => 'Round ID required']); exit; }

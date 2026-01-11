@@ -1,12 +1,9 @@
 <?php
-session_start();
-require_once '../app/config/database.php'; // Correct path to config
+require_once __DIR__ . '/../app/core/guard.php';
+requireLogin();       // Ensures they have a Ticket ID (stored in user_id)
+requireRole('Audience');
 
-// 1. Security Check
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'Audience') {
-    header("Location: index.php");
-    exit();
-}
+require_once __DIR__ . '/../app/config/database.php';
 
 $ticket_id = $_SESSION['user_id'];
 

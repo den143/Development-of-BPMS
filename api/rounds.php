@@ -8,10 +8,6 @@ requireRole(['Event Manager', 'Tabulator']); // Allow Tabulator to Lock, but onl
 require_once __DIR__ . '/../app/config/database.php';
 require_once __DIR__ . '/../app/models/ScoreCalculator.php';
 
-// =========================================================================
-//  HELPER FUNCTIONS
-// =========================================================================
-
 // 1. Validate "Funnel Logic" (Configuration)
 function validateAdvancement($conn, $event_id, $current_order, $current_top_n) {
     if ($current_top_n < 1) return "Invalid Number: You must advance at least 1 contestant.";
@@ -83,9 +79,7 @@ function checkGatekeeper($conn, $event_id, $round_ordering) {
     return true;
 }
 
-// =========================================================================
 //  PART A: CRUD OPERATIONS (Returns Redirects for Forms)
-// =========================================================================
 
 // --- 1. ADD ROUND ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add') {
@@ -170,10 +164,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete') {
     exit();
 }
 
-
-// =========================================================================
 //  PART B: TRAFFIC CONTROLLER (Returns JSON for JS Fetch)
-// =========================================================================
 
 // --- 4. START ROUND (Replaces set_active) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'start') {
@@ -295,9 +286,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     requireRole('Event Manager');
     $round_id = (int)$_POST['round_id'];
 
-    // Optional: You can check password here if sent via JSON, or trust the Session + Role
-    // For this architecture, we rely on the Guard.
-
+    // For this architecture, rely on the Guard.php to prevent data loss.
     $s_check = $conn->prepare("SELECT id FROM scores WHERE round_id = ? LIMIT 1");
     $s_check->bind_param("i", $round_id);
     $s_check->execute();
@@ -324,7 +313,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $order = $r_query['ordering'];
 
         // 2. Safety Check: Can we re-open?
-        // We cannot re-open Round 1 if Round 2 is already Active/Completed.
+        // Cannot re-open Round 1 if Round 2 is already Active/Completed.
         $next_round_check = $conn->query("SELECT title FROM rounds WHERE event_id = $event_id AND ordering > $order AND status != 'Pending'");
         if ($next_round_check->num_rows > 0) {
             $next = $next_round_check->fetch_assoc();
@@ -332,9 +321,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
 
         // 3. The Re-Open Action
-        // We set status back to 'Active'. 
-        // We do NOT delete scores (that's the point, we want to keep them).
-        // We do NOT delete 'Qualified' tags yet (they will be overwritten when we Re-Lock).
+        // Set status back to 'Active'. 
+        // Do NOT delete scores (that's the point, we want to keep them).
+        // Do NOT delete 'Qualified' tags yet (they will be overwritten when Re-Lock).
         $conn->query("UPDATE rounds SET status = 'Active' WHERE id = $round_id");
 
         $conn->commit();

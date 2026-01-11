@@ -37,10 +37,7 @@ try {
         throw new Exception("LOCKED: This round is closed. Scores can no longer be submitted.");
     }
 
-    // 4. Data Integrity Check
-    // (Optional: You could count scores here, but client-side check handles UX)
-
-    // 5. The Lock (Mark Judge as Submitted)
+    // 4. The Lock (Mark Judge as Submitted)
     $stmt_status = $conn->prepare("
         INSERT INTO judge_round_status (round_id, judge_id, status, submitted_at) 
         VALUES (?, ?, 'Submitted', NOW()) 

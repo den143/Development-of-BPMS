@@ -1,5 +1,7 @@
 <?php
-// bpms/api/resend_email.php
+// Purpose: Backend controller for resending login credentials.
+// Supports two modes: 'reminder' (link only) and 'reset' (generate new password).
+
 require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
 requireRole(['Event Manager', 'Contestant Manager']);
@@ -9,9 +11,9 @@ require_once __DIR__ . '/../app/core/CustomMailer.php';
 if (isset($_POST['user_id'])) {
     
     $user_id = (int)$_POST['user_id'];
-    $action_type = $_POST['action_type'] ?? 'reset'; // Default to 'reset' if not specified
+    $action_type = $_POST['action_type'] ?? 'reset'; // Default to 'reset'
     
-    // 1. Get User Details First (Needed for both actions)
+    // 1. Fetch User Data
     $query = $conn->query("SELECT name, email, role FROM users WHERE id = $user_id");
     $user = $query->fetch_assoc();
     
@@ -21,12 +23,14 @@ if (isset($_POST['user_id'])) {
         exit();
     }
 
-    $site_link = "http://my-bpmps-project.rf.gd/bpms/public/index.php"; // for infinityfree
-    $site_link = "https://juvenal-esteban-octavalent.ngrok-free.dev/bpms/public/index.php"; //for ngrok
+    // Configuration: Update this link for production
+    $site_link = "https://juvenal-esteban-octavalent.ngrok-free.dev/bpms/public/index.php"; 
     $msg = "";
     $status = "error";
 
-    // --- OPTION A: REMINDER (Keep Password, Just Email) ---
+    // OPTION A: REMINDER (Safe Mode)
+    // Logic: Send a login link but DO NOT change the password.
+    // We cannot email the current password because it is hashed (encrypted) in the DB.
     if ($action_type === 'reminder') {
         $subject = "Reminder: Your Access Credentials";
         $body = "
@@ -51,20 +55,21 @@ if (isset($_POST['user_id'])) {
         }
     }
 
-    // --- OPTION B: RESET PASSWORD & SEND (Your Original Logic) ---
+    // OPTION B: RESET PASSWORD (Force Change)
+    // Logic: Generate a random string, hash it, update DB, and email the plain text version.
     elseif ($action_type === 'reset') {
         
-        // 1. Generate New Password
+        // 1. Generate Random Password (8 characters)
         $new_pass = substr(str_shuffle("abcdefDEFGH23456789"), 0, 8);
         $hashed_pass = password_hash($new_pass, PASSWORD_DEFAULT);
 
-        // 2. Update Database
+        // 2. Update Database with Hash
         $stmt = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
         $stmt->bind_param("si", $hashed_pass, $user_id);
         
         if ($stmt->execute()) {
             
-            // 3. Send Email
+            // 3. Send Email with Plain Text Password
             $subject = "Security Alert: New Login Credentials";
             $body = "
                 <h2>Hello, {$user['name']}!</h2>
@@ -92,11 +97,14 @@ if (isset($_POST['user_id'])) {
         }
     }
 
-    // Redirect back
+    // REDIRECTION LOGIC
+    // Purpose: Send user back to the exact page they came from (Judges or Organizers).
     $redirect_url = $_SERVER['HTTP_REFERER'] ?? '../public/index.php';
-    // Clean URL to avoid stacking parameters
+    
+    // Clean URL to avoid stacking old parameters
     $redirect_url = strtok($redirect_url, '?');
-    // If coming from organizers page, preserve view
+    
+    // If coming from organizers page, ensure we stay on the active tab
     if (strpos($_SERVER['HTTP_REFERER'], 'organizers.php') !== false) {
         $redirect_url .= "?view=active"; 
     }

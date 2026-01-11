@@ -1,4 +1,7 @@
 <?php
+// Purpose: Backend controller for managing Scoring Criteria and Segments.
+// Handles structural validation (weights/scores) and prevents changes during active rounds.
+
 // Enable Error Reporting
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
@@ -11,7 +14,7 @@ require_once __DIR__ . '/../app/config/database.php';
 
 // --- HELPER FUNCTIONS ---
 
-// 1. Check if Round is Locked
+// Logic: Prevent changes if the round is currently live or finished.
 function checkRoundLock($conn, $round_id) {
     $stmt = $conn->prepare("SELECT status, title FROM rounds WHERE id = ?");
     $stmt->bind_param("i", $round_id);
@@ -24,7 +27,7 @@ function checkRoundLock($conn, $round_id) {
     }
 }
 
-// 2. Validate Segment Weight (Max 100%)
+// Logic: Ensure Total Segment Weights do not exceed 100%.
 function validateSegmentWeight($conn, $round_id, $new_weight, $exclude_segment_id = null) {
     $sql = "SELECT SUM(weight_percentage) as total FROM segments WHERE round_id = ?";
     if ($exclude_segment_id) $sql .= " AND id != $exclude_segment_id";
@@ -41,7 +44,7 @@ function validateSegmentWeight($conn, $round_id, $new_weight, $exclude_segment_i
     return true;
 }
 
-// 3. Validate Criteria Score (Max 100pts)
+// Logic: Ensure Total Criteria Scores do not exceed 100 points.
 function validateCriteriaScore($conn, $segment_id, $new_score, $exclude_crit_id = null) {
     $sql = "SELECT SUM(max_score) as total FROM criteria WHERE segment_id = ?";
     if ($exclude_crit_id) $sql .= " AND id != $exclude_crit_id";
@@ -58,7 +61,7 @@ function validateCriteriaScore($conn, $segment_id, $new_score, $exclude_crit_id 
     return true;
 }
 
-// 4. [NEW] Validate Unique Order
+// Logic: Ensure ordering numbers (1, 2, 3...) are unique for display purposes.
 function validateUniqueOrder($conn, $type, $parent_id, $order, $exclude_id = null) {
     if ($type === 'segment') {
         $sql = "SELECT title FROM segments WHERE round_id = ? AND ordering = ?";
@@ -81,25 +84,26 @@ function validateUniqueOrder($conn, $type, $parent_id, $order, $exclude_id = nul
 }
 
 
-// --- 1. SEGMENT ACTIONS ---
+// PART 1: SEGMENT MANAGEMENT (Add / Update / Delete)
 
 // ADD SEGMENT
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_segment') {
     $round_id = (int)$_POST['round_id'];
-    checkRoundLock($conn, $round_id);
+    checkRoundLock($conn, $round_id); // Security: Stop if Round is Locked
 
     $title    = trim($_POST['title']);
     $desc     = trim($_POST['description']);
     $weight   = (float)$_POST['weight_percentage']; 
     $order    = (int)$_POST['ordering'];
 
-    // Validations
+    // Validations: Check Math (Weight) and Display (Order)
     $checkW = validateSegmentWeight($conn, $round_id, $weight);
     if ($checkW !== true) { header("Location: ../public/criteria.php?round_id=$round_id&error=" . urlencode($checkW)); exit(); }
 
     $checkO = validateUniqueOrder($conn, 'segment', $round_id, $order);
     if ($checkO !== true) { header("Location: ../public/criteria.php?round_id=$round_id&error=" . urlencode($checkO)); exit(); }
 
+    // Insert Segment
     $stmt = $conn->prepare("INSERT INTO segments (round_id, title, description, weight_percentage, ordering) VALUES (?, ?, ?, ?, ?)");
     if (!$stmt) die("Database Error: " . $conn->error);
     $stmt->bind_param("issdi", $round_id, $title, $desc, $weight, $order);
@@ -123,7 +127,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $weight   = (float)$_POST['weight_percentage'];
     $order    = (int)$_POST['ordering'];
 
-    // Validations (Exclude self)
+    // Validations (passing $seg_id to exclude itself from checks)
     $checkW = validateSegmentWeight($conn, $round_id, $weight, $seg_id);
     if ($checkW !== true) { header("Location: ../public/criteria.php?round_id=$round_id&error=" . urlencode($checkW)); exit(); }
 
@@ -147,6 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $r_id = (int)$_POST['round_id'];
     checkRoundLock($conn, $r_id);
 
+    // Safety: Check if scores exist before deleting
     $check = $conn->prepare("SELECT s.id FROM scores s JOIN criteria c ON s.criteria_id = c.id WHERE c.segment_id = ? LIMIT 1");
     $check->bind_param("i", $id);
     $check->execute();
@@ -162,7 +167,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 }
 
 
-// --- 2. CRITERIA ACTIONS ---
+// PART 2: CRITERIA MANAGEMENT (Add / Update / Delete)
 
 // ADD CRITERIA
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_criteria') {
@@ -208,7 +213,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $max_score  = (float)$_POST['max_score'];
     $order      = (int)$_POST['ordering'];
 
-    // Validations (Exclude self)
+    // Validations
     $checkS = validateCriteriaScore($conn, $segment_id, $max_score, $crit_id);
     if ($checkS !== true) { header("Location: ../public/criteria.php?round_id=$r_id&error=" . urlencode($checkS)); exit(); }
 

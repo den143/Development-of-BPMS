@@ -1,10 +1,15 @@
 <?php
+// Purpose: Backend controller for managing Event Organizers (Staff).
+// Handles creating accounts for Tabulators, Coordinators, etc., and linking them to events.
+
 require_once __DIR__ . '/../app/core/guard.php';
 requireLogin();
 requireRole('Event Manager');
 require_once __DIR__ . '/../app/config/database.php';
 
-// --- 1. ADD or RESTORE ORGANIZER ---
+// ACTION 1: ADD or RESTORE ORGANIZER
+// Purpose: Assign a staff member to the event. 
+// Logic: If user exists, UPDATE their details; otherwise CREATE new.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'create') {
     
     $event_id = (int)$_POST['event_id'];
@@ -14,6 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $role     = trim($_POST['role']);
     $pass     = trim($_POST['password']);
     
+    // SECURITY: Role Whitelist
     $allowed_roles = ['Judge Coordinator', 'Contestant Manager', 'Tabulator'];
     if (!in_array($role, $allowed_roles)) {
         header("Location: ../public/organizers.php?error=Invalid Role selected");
@@ -22,113 +28,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     $conn->begin_transaction();
     try {
-        // [SECURITY] Check if this email belongs to an Event Manager
+        // Step 1: Check if this email already exists
         $checkAdmin = $conn->prepare("SELECT id, role FROM users WHERE email = ?");
         $checkAdmin->bind_param("s", $email);
         $checkAdmin->execute();
         $adminRes = $checkAdmin->get_result();
 
-        $is_new_account = false; // Flag to track if we should send password
+        $msg_prefix = ""; // To track if we Updated or Created
 
         if ($adminRes->num_rows > 0) {
-            // --- EXISTING USER CASE ---
+            // CASE: EXISTING USER -> UPDATE DETAILS
             $existingUser = $adminRes->fetch_assoc();
+            
+            // SECURITY: Hierarchy Protection
             if ($existingUser['role'] === 'Event Manager') {
                 throw new Exception("Security Alert: You cannot assign the Event Manager account as an Organizer.");
             }
-            // Use existing user
+            
             $user_id = $existingUser['id'];
-            $is_new_account = false;
+            
+            // Logic: Update Name, Phone, and Password to match the new input.
+            // This ensures the profile is up-to-date with what the Event Manager just typed.
+            $hashed_pass = password_hash($pass, PASSWORD_DEFAULT);
+            $updateStmt = $conn->prepare("UPDATE users SET name=?, phone=?, password=?, role=? WHERE id=?");
+            $updateStmt->bind_param("ssssi", $name, $phone, $hashed_pass, $role, $user_id);
+            $updateStmt->execute();
+
+            $msg_prefix = "Existing account updated & ";
             
         } else {
-            // --- NEW USER CASE ---
+            // CASE: NEW USER -> CREATE ACCOUNT
             if (empty($pass)) { throw new Exception("Password required for new accounts"); }
+            
             $hashed_pass = password_hash($pass, PASSWORD_DEFAULT);
             $stmt = $conn->prepare("INSERT INTO users (created_by, name, email, phone, role, password, status) VALUES (?, ?, ?, ?, ?, ?, 'Active')");
             $creator = $_SESSION['user_id'];
             $stmt->bind_param("isssss", $creator, $name, $email, $phone, $role, $hashed_pass);
             $stmt->execute();
             $user_id = $conn->insert_id;
-            $is_new_account = true;
+            
+            $msg_prefix = "New organizer created & ";
         }
 
-        // Check/Create Link
+        // Step 2: Link User to Event
         $linkCheck = $conn->prepare("SELECT id FROM event_organizers WHERE event_id = ? AND user_id = ?");
         $linkCheck->bind_param("ii", $event_id, $user_id);
         $linkCheck->execute();
         $linkRes = $linkCheck->get_result();
         
         if ($linkRes->num_rows > 0) {
-            // --- RESTORE EXISTING LINK ---
+            // RESTORE
             $link_id = $linkRes->fetch_assoc()['id'];
-            // [UPDATED] Ensure is_deleted is set to 0 when restoring
             $restore = $conn->prepare("UPDATE event_organizers SET status='Active', is_deleted=0 WHERE id=?");
             $restore->bind_param("i", $link_id);
             $restore->execute();
-            $msg = "Organizer restored to this event";
+            $msg = $msg_prefix . "restored to this event.";
         } else {
-            // --- CREATE NEW LINK ---
-            // [UPDATED] Explicitly set is_deleted to 0
+            // CREATE LINK
             $insert = $conn->prepare("INSERT INTO event_organizers (event_id, user_id, status, is_deleted) VALUES (?, ?, 'Active', 0)");
             $insert->bind_param("ii", $event_id, $user_id);
             $insert->execute();
-            $msg = "Organizer added successfully";
+            $msg = $msg_prefix . "added to this event.";
         }
 
-        // =============================================================
-        //  SEND EMAIL NOTIFICATION (Using CustomMailer)
-        // =============================================================
+        // Step 3: Send Email Notification
         require_once __DIR__ . '/../app/core/CustomMailer.php';
+        $site_link = "https://juvenal-esteban-octavalent.ngrok-free.dev/bpms/public/index.php"; 
 
-        // 1. Website Link for infinityfree
-        //$site_link = "http://my-bpmps-project.rf.gd/bpms/public/index.php";
-        $site_link = "https://juvenal-esteban-octavalent.ngrok-free.dev/bpms/public/index.php";
-
-        // 2. Get Event Name
         $evt_name = "the Event";
         $e_query = $conn->query("SELECT name FROM events WHERE id = $event_id");
-        if ($row = $e_query->fetch_assoc()) {
-            $evt_name = $row['name'];
-        }
+        if ($row = $e_query->fetch_assoc()) $evt_name = $row['name'];
 
-        // 3. Build Email Content
         $subject = "Team Assignment: $role for $evt_name";
         
-        if ($is_new_account) {
-            // Message for NEW Accounts (Include Password)
-            $body = "
-                <h2>Welcome, $name!</h2>
-                <p>You have been assigned as a <b>$role</b> for <b>$evt_name</b>.</p>
-                
-                <div style='background:#f3f4f6; padding:15px; border-radius:8px; border:1px solid #ddd; margin:20px 0;'>
-                    <strong>Your Login Credentials:</strong><br>
-                    Email: <b>$email</b><br>
-                    Password: <b>$pass</b>
-                </div>
+        $body = "
+            <h2>Welcome, $name!</h2>
+            <p>You have been assigned as a <b>$role</b> for <b>$evt_name</b>.</p>
+            
+            <div style='background:#f3f4f6; padding:15px; border-radius:8px; border:1px solid #ddd; margin:20px 0;'>
+                <strong>Your Login Credentials:</strong><br>
+                Email: <b>$email</b><br>
+                Password: <b>$pass</b>
+            </div>
 
-                <p>Please login to your dashboard to start managing your tasks:</p>
-                <p><a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;'>Login to Dashboard</a></p>
-            ";
-        } else {
-            // Message for EXISTING Accounts (No Password shown)
-            $body = "
-                <h2>Welcome back, $name!</h2>
-                <p>You have been assigned a new role as <b>$role</b> for the event: <b>$evt_name</b>.</p>
-                <p>Since you already have an account, please login using your existing credentials.</p>
-                <p><a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;'>Login to Dashboard</a></p>
-            ";
-        }
+            <p>Please login to your dashboard to start managing your tasks:</p>
+            <p><a href='$site_link' style='background:#F59E0B; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;'>Login to Dashboard</a></p>
+        ";
 
-        // 4. Send
         sendCustomEmail($email, $subject, $body);
-        // =============================================================
 
         $conn->commit();
         header("Location: ../public/organizers.php?success=" . urlencode($msg));
 
     } catch (mysqli_sql_exception $e) {
         $conn->rollback();
-        // Handle Duplicate Entry specifically
         if ($e->getCode() == 1062) {
             header("Location: ../public/organizers.php?error=Email address is already in use by another user.");
         } else {
@@ -141,7 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
-// --- 2. UPDATE ORGANIZER (Edit) ---
+// ACTION 2: UPDATE ORGANIZER (Edit via Edit Button)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update') {
     
     $user_id = (int)$_POST['org_id'];
@@ -152,13 +145,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $pass  = trim($_POST['password']);
 
     try {
-        // [CHECK 1] Security: Don't edit Event Managers
+        // SECURITY: Hierarchy Protection
         $checkRole = $conn->query("SELECT role FROM users WHERE id = $user_id");
         if ($checkRole->fetch_assoc()['role'] === 'Event Manager') {
              throw new Exception("Cannot edit Event Manager accounts here.");
         }
 
-        // [CHECK 2] Duplicate Email Check
+        // LOGIC: Duplicate Email Check
         $dupCheck = $conn->prepare("SELECT id FROM users WHERE email = ? AND id != ?");
         $dupCheck->bind_param("si", $email, $user_id);
         $dupCheck->execute();
@@ -166,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             throw new Exception("This email is already used by another account.");
         }
 
-        // Update User
+        // Update User Profile
         if (!empty($pass)) {
             $hashed_pass = password_hash($pass, PASSWORD_DEFAULT);
             $stmt = $conn->prepare("UPDATE users SET name=?, email=?, phone=?, role=?, password=? WHERE id=?");
@@ -191,36 +184,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
-// --- 3. REMOVE / RESTORE / DELETE ---
+// ACTION 3: REMOVE / RESTORE / ARCHIVE
 if (isset($_GET['action']) && isset($_GET['id'])) {
     $link_id = (int)$_GET['id'];
     $type = $_GET['action'];
 
     if ($type === 'delete') {
-        // --- SOFT DELETE ---
-        // Hide from UI completely (is_deleted = 1)
         $stmt = $conn->prepare("UPDATE event_organizers SET is_deleted = 1 WHERE id = ?");
         $stmt->bind_param("i", $link_id);
-        
-        $redirect_view = 'archived'; // Stay in archive view
+        $redirect_view = 'archived'; 
         $msg = "Organizer removed permanently from list.";
 
     } elseif ($type === 'restore') {
-        // --- RESTORE ---
-        // Make Active AND visible (is_deleted = 0)
         $stmt = $conn->prepare("UPDATE event_organizers SET status = 'Active', is_deleted = 0 WHERE id = ?");
         $stmt->bind_param("i", $link_id);
-        
-        $redirect_view = 'archived'; // Stay in archive view to see it vanish (or go to active if preferred)
+        $redirect_view = 'archived'; 
         $msg = "Organizer restored successfully.";
 
     } else {
-        // --- ARCHIVE (Default 'remove') ---
-        // Just set status to Inactive
         $stmt = $conn->prepare("UPDATE event_organizers SET status = 'Inactive' WHERE id = ?");
         $stmt->bind_param("i", $link_id);
-        
-        $redirect_view = 'active'; // Stay in active view
+        $redirect_view = 'active'; 
         $msg = "Organizer moved to archive.";
     }
 

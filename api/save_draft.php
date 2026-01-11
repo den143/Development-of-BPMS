@@ -25,15 +25,13 @@ $segment_id_input = (int)($data['segment_id'] ?? 0);
 
 $conn->begin_transaction();
 try {
-    // ---------------------------------------------------------
     // OPTIMIZATION 1: Fetch all Criteria Limits in ONE Query
-    // ---------------------------------------------------------
     $criteria_limits = [];
     if (isset($data['scores']) && !empty($data['scores'])) {
         // Extract all criteria IDs from the input
         $crit_ids = array_keys($data['scores']);
         
-        // Convert array to comma-separated string for SQL (safe because we cast to int later)
+        // Convert array to comma-separated string for SQL (safe because it cast to int later)
         $ids_placeholder = implode(',', array_fill(0, count($crit_ids), '?'));
         
         // Fetch max_score and segment_id for ALL sent criteria
@@ -51,9 +49,7 @@ try {
         }
     }
 
-    // ---------------------------------------------------------
     // 2. Save Scores (Loop using cached limits)
-    // ---------------------------------------------------------
     if (isset($data['scores'])) {
         $stmt = $conn->prepare("INSERT INTO scores (round_id, segment_id, criteria_id, judge_id, contestant_id, score_value) 
                                 VALUES (?, ?, ?, ?, ?, ?) 
@@ -77,9 +73,7 @@ try {
         }
     }
 
-    // ---------------------------------------------------------
     // 3. Save Comment
-    // ---------------------------------------------------------
     if (isset($data['comment'])) {
         $stmt_c = $conn->prepare("INSERT INTO segment_comments (round_id, segment_id, judge_id, contestant_id, comment_text) 
                                   VALUES (?, ?, ?, ?, ?) 
